@@ -1,10 +1,11 @@
+//use crate::taskerror::TaskError;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Sender, Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use arc_swap::ArcSwap;
 use hashbrown::HashMap;
-use chrono::{NaiveDateTime, Timelike, Utc};
+use chrono::{NaiveDateTime, Timelike, TimeDelta, Utc};
 use chrono_tz::Asia::Shanghai;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -41,19 +42,49 @@ impl TimeWheel {
     }
 
     // 添加任务时传入字符串参数
-    fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, task: Task, arg: String) -> u64 {
+    fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, task: Task, arg: String) -> Result<u64, String> {
+        // 获取当前时间（上海时区）
+        let now = Utc::now().with_timezone(&Shanghai).naive_local();
+
+        // 将 std::time::Duration 转换为 chrono::TimeDelta
+        let delta = TimeDelta::from_std(delay)
+            .map_err(|e| format!("时间转换失败: {}", e))?;
+
+        // 计算目标时间
+        let target_time = timestamp.checked_add_signed(delta)
+            .ok_or("时间计算溢出（超出范围）")?;
+
+        // 检查目标时间是否早于当前时间
+        if target_time < now {
+            return Err("任务时间已过时".to_string());
+        }
+
+        // 计算目标时间与当前时间的差值
+        let duration_since_now = target_time - now;
+
+        // 检查是否超过24小时（24h = 24 * 3600秒）
+        if duration_since_now > TimeDelta::hours(24) {
+            return Err("任务时间超出时间轮最大范围，延迟添加到监控".to_string());
+        }
+
         // 计算NaiveDateTime属于第几格  根据当天的秒数确定，比如当前时间9点45分50秒，属于  9*3600 + 45*60 + 50
         let current_seconds = timestamp.time().num_seconds_from_midnight() % (24 * 3600);
         let current_seconds =  current_seconds as usize;
         // 计算延迟的秒数
         let ticks = (delay.as_nanos() / self.tick_duration.as_nanos()) as usize;
         let target_slot = (current_seconds + ticks) % self.total_slots;
-        println!("当前时间: {}, 目标槽: {}  msg:{}", current_seconds, target_slot, arg);
-        let task_id = rand::random::<u64>();
+        //println!("当前时间: {}, 目标槽: {}  msg:{}", current_seconds, target_slot, arg);
+        
         let slot = self.slots[target_slot].load();
-        let mut tasks = slot.tasks.lock().unwrap();
-        tasks.insert(task_id, (task, arg)); // 存储闭包和参数
-        task_id
+        //let mut tasks = slot.tasks.lock().unwrap();
+        let mut tasks = slot.tasks
+            .lock()
+            .map_err(|e| format!("Failed to lock tasks: {:?}", e))?;
+
+        let task_id = rand::random::<u64>();
+        tasks.insert(task_id, (task, arg));
+
+        Ok(task_id)
     }
 
     fn run(&self) {
@@ -92,19 +123,41 @@ impl TimeWheel {
 
 // 调度器接口支持字符串参数
 pub struct TaskScheduler {
-    sender: Sender<(NaiveDateTime, Duration, Task, String)>,
+    sender: Sender<(
+        NaiveDateTime, 
+        Duration, 
+        Task, 
+        String, 
+        Sender<String> // 用于返回结果的通道
+        )>,
 }
 
 impl TaskScheduler {
     pub fn new(tick_duration: Duration, total_slots: usize) -> Self {
-        let (sender, receiver) = mpsc::channel();
+        //let (sender, receiver) = mpsc::channel();
+        // 修改后（显式指定类型）
+        let (sender, receiver) = mpsc::channel::<(
+            NaiveDateTime,
+            Duration,
+            Task,                // 使用已定义的 Task 类型别名
+            String,
+            Sender<String>,      // 明确返回通道类型
+        )>();
+
         let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
         
         // 接收任务线程
         let tw_clone = time_wheel.clone();
         thread::spawn(move || {
-            for (timestamp, delay, task, arg) in receiver {
-                tw_clone.add_task(timestamp, delay, task, arg);
+            for (timestamp, delay, task, arg, result_sender) in receiver {
+                //let result = tw_clone.add_task(timestamp, delay, task, arg.clone());
+                //result_sender.send(format!("{}   taskid:{}", arg, result)).expect("Failed to send result");
+                let result = tw_clone.add_task(timestamp, delay, task, arg.clone())
+                    .map(|id| format!("Task [{}] add successful", id)) // 成功时包装消息
+                    .unwrap_or_else(|e| format!("Error: {}", e)); // 错误时转换为字符串
+
+                // 发送结果（成功或错误）
+                result_sender.send(result).expect("Failed to send result");
             }
         });
         
@@ -119,11 +172,25 @@ impl TaskScheduler {
     }
 
     // 新接口：支持传入字符串参数
-    pub fn schedule<F>(&self, timestamp: NaiveDateTime, delay: Duration, arg: String, task: F)
+    pub fn schedule<F>(
+        &self, 
+        timestamp: NaiveDateTime, 
+        delay: Duration, 
+        arg: String, 
+        task: F
+    ) -> Receiver<String>
     where
         F: Fn(String) + Send + Sync + 'static,
     {
         let boxed_task = Box::new(task);
-        self.sender.send((timestamp, delay, boxed_task, arg)).unwrap();
+
+        // 创建临时通道，用于接收返回值
+        let (result_sender, result_receiver) = channel();
+        
+        // 发送任务请求，附带 result_sender
+        self.sender.send((timestamp, delay, boxed_task, arg, result_sender))
+            .expect("Failed to send task");
+        
+        result_receiver
     }
 }
