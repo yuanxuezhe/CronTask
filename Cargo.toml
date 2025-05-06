@@ -1,0 +1,16 @@
+[package]
+name = "CronTask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-broadcast = "0.5.1"
+clockwork-scheduler = "1.0.3"
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3.21"
+arc-swap = "1.7.1"
+hashbrown = "0.15.2"
+rand = "0.8"
+chrono = "0.4"
+chrono-tz = "0.5"
+spin_sleep = "1.3.1"
