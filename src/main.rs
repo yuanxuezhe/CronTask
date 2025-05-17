@@ -1,63 +1,63 @@
 mod taskscheduler;
+mod crontask;
+mod task;
 
-use std::time::Duration;
-#[allow(unused_imports)]
-use chrono::{NaiveDateTime, Utc};
-use chrono_tz::Asia::Shanghai;
+//use std::time::Duration;
+//#[allow(unused_imports)]
+//use chrono::{NaiveDateTime, Utc};
 use tokio::signal;
-use taskscheduler::TaskScheduler;
+use dbcore::Database;
+use std::fs;
+use task::Task;
+use crontask::CronTask;
 
 #[tokio::main]
-async fn main() {
-    // 定义一天的时间轮
-    let scheduler = TaskScheduler::new(Duration::from_secs(1), 86400);
-
-    // 示例：添加带不同字符串参数的任务
-    for i in 0..10 {
-        let eventdata = format!("Task-{}", i);
-        let result_receiver = scheduler.schedule(
-           //timestamp_to_datetime("20250430152300", "%Y%m%d%H%M%S"),
-           //NaiveDateTime::parse_from_str("20250429110800", "%Y%m%d%H%M%S").unwrap(),
-           Utc::now().with_timezone(&Shanghai).naive_local(),
-            Duration::from_secs(i as u64),
-            eventdata.clone(),
-            move |eventdata| {
-                let now = Utc::now().with_timezone(&Shanghai);
-                //println!("[{}] 执行任务: {}", now.format("%Y%m%d %H:%M:%S"), eventdata);
-                println!("[{}] 执行任务: {}", now, eventdata);
-            },
-        );
-
-        match result_receiver.recv() {
-            Ok(msg) => println!("Result: {}", msg), // 直接打印消息
-            Err(e) => println!("Channel error: {}", e),
-        }
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db_path = "evdata.db";
+        
+    // 简化文件存在检查
+    if !std::path::Path::new(db_path).exists() {
+        fs::File::create(db_path)?; // 使用?自动转换错误类型
     }
 
-    // 示例：添加带不同字符串参数的任务
-    for i in 0..10 {
-        let eventdata = format!("Task-{}", i);
-        let result_receiver = scheduler.schedule(
-           //timestamp_to_datetime("20250430152300", "%Y%m%d%H%M%S"),
-           NaiveDateTime::parse_from_str("20250508110800", "%Y%m%d%H%M%S").unwrap(),
-           //Utc::now().with_timezone(&Shanghai).naive_local(),
-            Duration::from_secs(i as u64),
-            eventdata.clone(),
-            move |eventdata| {
-                let now = Utc::now().with_timezone(&Shanghai);
-                //println!("[{}] 执行任务: {}", now.format("%Y%m%d %H:%M:%S"), eventdata);
-                println!("[{}] 执行任务: {}", now, eventdata);
-            },
-        );
+    let db = Database::new(db_path).await?;
 
-        match result_receiver.recv() {
-            Ok(msg) => println!("Result: {}", msg), // 直接打印消息
-            Err(e) => println!("Channel error: {}", e),
-        }
-    }
+    // 初始化表结构
+    Task::init(&db).await?;
+
+    // let task1 = Task {
+    //     taskid: 1,
+    //     taskname: "Task1".to_string(),
+    //     start_date: "20250512".to_string(),
+    //     end_date: "20250612".to_string(),
+    //     cycle_type: "0".to_string(),
+    //     period: "D".to_string(),
+    //     time_point: "133410".to_string(),
+    //     retry_type: "1".to_string(),
+    //     retry_interval: 10000,
+    //     retry_count: 3,
+    //     current_trigger_count: 0,
+    //     status: "A".to_string(),
+    // };
+
+    // // 插入任务
+    // match task1.insert(&db).await {
+    //     Ok(affected_rows) => {
+    //         // 插入成功，返回影响行数
+    //         println!("effect rows:{}", affected_rows) // 可根据实际需求返回或处理
+    //     },
+    //     Err(e) => {
+    //         // 插入失败，记录错误
+    //         eprintln!("[ERROR] 定时任务插入失败: {}", e);
+    //     }
+    // }
+
+    // 创建任务管理器 3600000ms = 1h 1000毫秒 = 1秒
+    let _cron_task = CronTask::new(10000, 1000, 86400, false, db);
 
     println!("时间轮运行中...");
     // 等待 Ctrl+C 信号
     signal::ctrl_c().await.expect("监听信号失败");
     println!("收到 Ctrl+C，停止所有任务...");
+    Ok(())
 }
