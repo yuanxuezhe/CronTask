@@ -12,10 +12,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::hint::spin_loop;
 
 // 修改任务类型，闭包携带字符串参数
-type Task = Arc<dyn Fn(String) + Send + Sync + 'static>;
+type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 
 struct TimeWheelSlot {
-    tasks: AsyncMutex<HashMap<u64, (Task, String)>>, // 使用 Tokio 的异步锁
+    tasks: AsyncMutex<HashMap<String, (Task, String)>>, // 使用 Tokio 的异步锁
 }
 
 struct TimeWheel {
@@ -64,7 +64,7 @@ impl TimeWheel {
     }
 
     // 添加任务时传入字符串参数
-    async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, task: Task, arg: String) -> Result<u64, String> {
+    async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, String> {
         // 获取当前时间（上海时区）
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
 
@@ -95,11 +95,14 @@ impl TimeWheel {
         let slot = self.slots[target_slot % self.total_slots].load();
 
         let mut tasks = slot.tasks.lock().await;
+        // 检查是否已存在相同的任务
+        if tasks.contains_key(&key) {
+            return Err("任务已存在".to_string());
+        }
 
-        let task_id = rand::random::<u64>();
-        tasks.insert(task_id, (task, arg));
+        tasks.insert(key.clone(), (task, arg));
 
-        Ok(task_id)
+        Ok(key)
     }
 
     async fn run(&self) {
@@ -128,14 +131,14 @@ impl TimeWheel {
             let slot = self.slots[current].load();
             let mut tasks = slot.tasks.lock().await;
             // 执行所有任务（在阻塞线程中运行）
-            let task_clones: Vec<_> = tasks.drain().map(|(_, (task, arg))| (task, arg)).collect();
+            let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
             drop(tasks); // 提前释放锁
            
-            for (task, arg) in task_clones {
+            for (key, task, arg) in task_clones {
                 let task = Arc::clone(&task);
                 let arg = arg.clone();
                 tokio::task::spawn_blocking(move || {
-                    task(arg); // 在专用线程池执行
+                    task(key.clone(), arg); // 在专用线程池执行
                 });
             }
 
@@ -186,14 +189,14 @@ impl TimeWheel {
             let slot = self.slots[current].load();
             let mut tasks = slot.tasks.lock().await;
             // 执行所有任务（在阻塞线程中运行）
-            let task_clones: Vec<_> = tasks.drain().map(|(_, (task, arg))| (task, arg)).collect();
+            let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
             drop(tasks); // 提前释放锁
            
-            for (task, arg) in task_clones {
+            for (key, task, arg) in task_clones {
                 let task = Arc::clone(&task);
                 let arg = arg.clone();
                 tokio::task::spawn_blocking(move || {
-                    task(arg); // 在专用线程池执行
+                    task(key.clone(), arg); // 在专用线程池执行
                 });
             }
 
@@ -211,8 +214,9 @@ pub struct TaskScheduler {
     sender: Sender<(
         NaiveDateTime, 
         Duration, 
-        Task, 
         String, 
+        String, 
+        Task, 
         Sender<String> // 用于返回结果的通道
         )>,
 }
@@ -223,8 +227,9 @@ impl TaskScheduler {
         let (sender, receiver) = mpsc::channel::<(
             NaiveDateTime,
             Duration,
-            Task,                // 使用已定义的 Task 类型别名
             String,
+            String,
+            Task,                // 使用已定义的 Task 类型别名
             Sender<String>,      // 明确返回通道类型
         )>();
 
@@ -235,10 +240,10 @@ impl TaskScheduler {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                for (timestamp, delay, task, arg, result_sender) in receiver {
+                for (timestamp, delay, key, arg, task, result_sender) in receiver {
                     let arg_for_msg = arg.clone();
-                    let result = tw_clone.add_task(timestamp, delay, task, arg).await
-                        .map(|id| format!("任务 {}[{}] 添加成功", id, arg_for_msg))
+                    let result = tw_clone.add_task(timestamp, delay, key, arg, task).await
+                         .map(|key| format!("{}|{}", key, arg_for_msg))
                         .unwrap_or_else(|e| format!("错误: {}", e));
                     result_sender.send(result).unwrap();
                 }
@@ -264,23 +269,26 @@ impl TaskScheduler {
     }
 
     // 新接口：支持传入字符串参数
-    pub fn schedule<F>(
+    pub fn schedule<F, K>(
         &self, 
         timestamp: NaiveDateTime, 
         delay: Duration, 
+        key: K,               // ← 新增参数 key
         arg: String, 
         task: F
     ) -> Receiver<String>
     where
-        F: Fn(String) + Send + Sync + 'static,
+        F: Fn(String, String) + Send + Sync + 'static,
+        K: ToString,          // ← 要求 key 可转为 String
     {
         let arc_task = Arc::new(task);
-
+        // 将 key 转为 String
+        let key_str = key.to_string();
         // 创建临时通道，用于接收返回值
         let (result_sender, result_receiver) = channel();
         
         // 发送任务请求，附带 result_sender
-        self.sender.send((timestamp, delay, arc_task, arg, result_sender))
+        self.sender.send((timestamp, delay, key.to_string(), arg, arc_task, result_sender))
             .expect("Failed to send task");
         
         result_receiver

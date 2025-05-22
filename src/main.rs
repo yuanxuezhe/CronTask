@@ -25,6 +25,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化表结构
     Task::init(&db).await?;
 
+    // 创建任务管理器 3600000ms = 1h 1000毫秒 = 1秒
+    let _cron_task = CronTask::new(10000, 1000, 86400, false, db);
+
+    println!("时间轮运行中...");
+    // 等待 Ctrl+C 信号
+    signal::ctrl_c().await.expect("监听信号失败");
+    println!("收到 Ctrl+C，停止所有任务...");
+    Ok(())
+}
+
+
+
     // let task1 = Task {
     //     taskid: 1,
     //     taskname: "Task1".to_string(),
@@ -51,13 +63,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //         eprintln!("[ERROR] 定时任务插入失败: {}", e);
     //     }
     // }
-
-    // 创建任务管理器 3600000ms = 1h 1000毫秒 = 1秒
-    let _cron_task = CronTask::new(10000, 1000, 86400, false, db);
-
-    println!("时间轮运行中...");
-    // 等待 Ctrl+C 信号
-    signal::ctrl_c().await.expect("监听信号失败");
-    println!("收到 Ctrl+C，停止所有任务...");
-    Ok(())
-}

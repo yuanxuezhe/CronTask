@@ -87,28 +87,51 @@ impl Task {
     pub fn next_n_schedules(&self, maxdays: u32) -> Vec<NaiveDateTime> {
         // 1. 准备基础数据
         let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
-        let Ok(task_time) = NaiveTime::parse_from_str(&self.time_point, "%H%M%S") else {
+        // let Ok(task_time) = NaiveTime::parse_from_str(&self.time_point, "%H%M%S") else {
+        //     return vec![];
+        // };
+
+        // 解析多个时间点
+        let time_points: Vec<NaiveTime> = self.time_point
+        .split(',')
+        .filter_map(|s| NaiveTime::parse_from_str(s.trim(), "%H%M%S").ok())
+        .collect();
+
+        if time_points.is_empty() {
             return vec![];
-        };
+        }
 
         // 2. 生成候选日期（从今天开始最多10天）
         let candidates = self.generate_candidate_dates(current_time.date(), maxdays)
             .unwrap_or_default();
 
         // 3. 生成有效时间点
+        // candidates
+        //     .into_iter()
+        //     .filter_map(|date| {
+        //         let datetime = date.and_time(task_time);
+        //         // 过滤过去时间（允许当天未过的时间点）  && self.is_valid(datetime) 
+        //         if datetime > current_time {
+        //             Some(datetime)
+        //         } else {
+        //             None
+        //         }
+        //     })
+        //     //.take(10) // 最多取10个
+        //     .collect()
         candidates
-            .into_iter()
-            .filter_map(|date| {
-                let datetime = date.and_time(task_time);
-                // 过滤过去时间（允许当天未过的时间点）  && self.is_valid(datetime) 
+        .into_iter()
+        .flat_map(|date| {
+            time_points.iter().filter_map(move |&tp| {
+                let datetime = date.and_time(tp);
                 if datetime > current_time {
                     Some(datetime)
                 } else {
                     None
                 }
             })
-            //.take(10) // 最多取10个
-            .collect()
+        })
+        .collect()
     }
 
     /// 生成候选日期（优化版：动态生成避免全量计算）
