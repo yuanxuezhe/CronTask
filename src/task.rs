@@ -7,6 +7,18 @@ use chrono::Weekday;
 use std::collections::HashSet;
 
 #[derive(Debug)]
+#[derive(Clone)]
+pub struct TaskDetail {
+    pub taskid: i32,
+    pub timepoint: String,
+    // 当前触发次数
+    pub current_trigger_count: i32,
+    // 当前状态
+    pub status: i32,
+    pub tag: i32,
+}
+
+#[derive(Debug)]
 #[derive(Default)]
 #[derive(Clone)]
 #[derive(SqlCRUD)]
@@ -33,9 +45,6 @@ pub struct Task {
     pub retry_interval: i32,
     // 重试次数
     pub retry_count: i32,
-    // 当前触发次数
-    #[none]
-    pub current_trigger_count: i32,
     // 任务状态
     pub status: String,
     // 描述
