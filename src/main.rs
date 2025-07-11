@@ -2,9 +2,6 @@ mod taskscheduler;
 mod crontask;
 mod task;
 
-//use std::time::Duration;
-//#[allow(unused_imports)]
-//use chrono::{NaiveDateTime, Utc};
 use tokio::signal;
 use dbcore::Database;
 use std::fs;
@@ -15,9 +12,9 @@ use crontask::CronTask;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = "evdata.db";
         
-    // 简化文件存在检查
+    // 确保数据库文件存在
     if !std::path::Path::new(db_path).exists() {
-        fs::File::create(db_path)?; // 使用?自动转换错误类型
+        fs::File::create(db_path)?;
     }
 
     let db = Database::new(db_path).await?;
@@ -25,13 +22,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化表结构
     Task::init(&db).await?;
 
-    // 创建任务管理器 3600000ms = 1h 1000毫秒 = 1秒
+    // 创建任务管理器
+    // 参数说明：重载间隔10秒，tick间隔1秒，总槽位86400，非高精度模式
     let _cron_task = CronTask::new(10000, 1000, 86400, false, db);
 
     println!("时间轮运行中...");
+    
     // 等待 Ctrl+C 信号
     signal::ctrl_c().await.expect("监听信号失败");
     println!("收到 Ctrl+C，停止所有任务...");
+    
     Ok(())
 }
 

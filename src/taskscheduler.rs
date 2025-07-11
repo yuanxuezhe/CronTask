@@ -1,19 +1,21 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-//use tokio::sync::Mutex as AsyncMutex; // 替换为异步锁
 use arc_swap::ArcSwap;
 use hashbrown::HashMap;
 use chrono::{NaiveDateTime, TimeDelta, Utc};
 use chrono_tz::Asia::Shanghai;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::hint::spin_loop;
-use tokio::sync::{mpsc,Mutex,oneshot};
+use tokio::sync::{mpsc, Mutex, oneshot};
 
-// 修改任务类型，闭包携带字符串参数
+// 常量定义
+const CHANNEL_BUFFER_SIZE: usize = 1000;
+
+// 任务类型定义
 type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 
 struct TimeWheelSlot {
-    tasks: Mutex<HashMap<String, (Task, String)>>, // 使用 Tokio 的异步锁
+    tasks: Mutex<HashMap<String, (Task, String)>>,
 }
 
 struct TimeWheel {
@@ -33,6 +35,7 @@ impl TimeWheel {
                 }))
             })
             .collect();
+            
         Self {
             slots,
             current_slot: Arc::new(AtomicUsize::new(0)),
@@ -58,27 +61,23 @@ impl TimeWheel {
         self.get_real_slot(timestamp) % self.total_slots
     }
 
-    // 添加任务时传入字符串参数
+    /// 添加任务到时间轮
     async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, String> {
-        // 获取当前时间（上海时区）
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
+        let current_slot = self.get_real_slot(now);
 
-        let current_slot = self.get_real_slot(now); // 获取当前槽位
-
-        // 将 std::time::Duration 转换为 chrono::TimeDelta
         let delta = TimeDelta::from_std(delay)
             .map_err(|e| format!("时间转换失败: {}", e))?;
 
-        // 计算目标时间
         let target_time = timestamp.checked_add_signed(delta)
             .ok_or("时间计算溢出（超出范围）")?;
 
-        let target_slot = self.get_real_slot(target_time); // 获取目标槽位
+        let target_slot = self.get_real_slot(target_time);
 
         if target_time < now {
             return Err("任务时间已过时".to_string());
         }
-        // 检查目标时间是否早于当前时间
+        
         if target_slot <= current_slot {
             return Err("任务时间已过时".to_string());
         }
@@ -88,39 +87,33 @@ impl TimeWheel {
         }
 
         let slot = self.slots[target_slot % self.total_slots].load();
-
         let mut tasks = slot.tasks.lock().await;
-        // 检查是否已存在相同的任务
+        
         if tasks.contains_key(&key) {
             return Err("任务已存在".to_string());
         }
 
         tasks.insert(key.clone(), (task, arg));
-
         Ok(key)
     }
 
-    // 添加任务时传入字符串参数
+    /// 从时间轮中删除任务
     async fn del_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String) -> Result<String, String> {
-        // 获取当前时间（上海时区）
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
+        let current_slot = self.get_real_slot(now);
 
-        let current_slot = self.get_real_slot(now); // 获取当前槽位
-
-        // 将 std::time::Duration 转换为 chrono::TimeDelta
         let delta = TimeDelta::from_std(delay)
             .map_err(|e| format!("时间转换失败: {}", e))?;
 
-        // 计算目标时间
         let target_time = timestamp.checked_add_signed(delta)
             .ok_or("时间计算溢出（超出范围）")?;
 
-        let target_slot = self.get_real_slot(target_time); // 获取目标槽位
+        let target_slot = self.get_real_slot(target_time);
         
         if target_time < now {
             return Ok("任务时间已过时,无需取消".to_string());
         }
-        // 检查目标时间是否早于当前时间
+        
         if target_slot <= current_slot {
             return Ok("任务时间已过时,无需取消".to_string());
         }
@@ -130,7 +123,6 @@ impl TimeWheel {
         }
 
         let slot = self.slots[target_slot % self.total_slots].load();
-
         let mut tasks = slot.tasks.lock().await;
         
         match tasks.remove(&key) {
@@ -139,6 +131,7 @@ impl TimeWheel {
         }
     }
 
+    /// 运行时间轮（标准精度模式）
     async fn run(&self) {
         let now = SystemTime::now();
         let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
@@ -148,7 +141,7 @@ impl TimeWheel {
         let tick_ns = self.tick_duration.as_nanos();
         let next_tick_ns = ((now_ns / tick_ns) + 1) * tick_ns;
         let remaining_ns = next_tick_ns - now_ns;
-        spin_sleep::sleep(Duration::from_nanos(remaining_ns.try_into().unwrap())); // 或 std::thread::sleep
+        spin_sleep::sleep(Duration::from_nanos(remaining_ns.try_into().unwrap()));
         
         // 创建 Tokio 定时器
         let mut interval = tokio::time::interval(self.tick_duration);
@@ -156,6 +149,7 @@ impl TimeWheel {
         // 计算当日秒数
         let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local());
         self.current_slot.store(current_slot, Ordering::Release);
+        
         loop {
             // 等待下一次触发
             interval.tick().await;
@@ -164,6 +158,7 @@ impl TimeWheel {
        
             let slot = self.slots[current].load();
             let mut tasks = slot.tasks.lock().await;
+            
             // 执行所有任务（在阻塞线程中运行）
             let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
             drop(tasks); // 提前释放锁
@@ -184,6 +179,7 @@ impl TimeWheel {
         }
     }
 
+    /// 运行时间轮（高精度模式）
     async fn run_highprecision(&self) {
         let mut next_tick = {
             // 当前系统时间（UNIX 时间戳）
@@ -210,6 +206,7 @@ impl TimeWheel {
 
         let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local());
         self.current_slot.store(current_slot, Ordering::Release);
+        
         loop {
             // 忙等直到时间点
             while Instant::now() < next_tick {
@@ -222,6 +219,7 @@ impl TimeWheel {
        
             let slot = self.slots[current].load();
             let mut tasks = slot.tasks.lock().await;
+            
             // 执行所有任务（在阻塞线程中运行）
             let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
             drop(tasks); // 提前释放锁
@@ -243,6 +241,7 @@ impl TimeWheel {
     }
 }
 
+/// 任务请求枚举
 enum TaskRequest {
     Add {
         time: NaiveDateTime,
@@ -260,17 +259,14 @@ enum TaskRequest {
     },
 }
 
-
-// 调度器接口支持字符串参数
+/// 任务调度器
 pub struct TaskScheduler {
     sender: mpsc::Sender<TaskRequest>,
 }
 
 impl TaskScheduler {
     pub fn new(tick_duration: Duration, total_slots: usize, high_precision: bool) -> Self {
-        // 修改后（显式指定类型）
-        let (sender, receiver) = mpsc::channel::<TaskRequest>(1000);
-
+        let (sender, receiver) = mpsc::channel::<TaskRequest>(CHANNEL_BUFFER_SIZE);
         let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
         
         // 接收任务线程
@@ -295,7 +291,7 @@ impl TaskScheduler {
         let tw_driver = Arc::clone(&time_wheel);
         tokio::spawn(async move {
             if high_precision {
-                tw_driver.run_highprecision().await; // 可替换为 run_highprecision() 如有需要
+                tw_driver.run_highprecision().await;
             } else {
                 tw_driver.run().await;
             }
@@ -304,18 +300,18 @@ impl TaskScheduler {
         Self { sender }
     }
 
-    // 新接口：支持传入字符串参数
+    /// 调度任务
     pub async fn schedule<F, K>(
         &self, 
         timestamp: NaiveDateTime, 
         delay: Duration, 
-        key: K,               // ← 新增参数 key
+        key: K,
         arg: String, 
         task: F
     ) -> Result<String, String>
     where
         F: Fn(String, String) + Send + Sync + 'static,
-        K: ToString,          // ← 要求 key 可转为 String
+        K: ToString,
     {
         let (resp_tx, resp_rx) = oneshot::channel();
         let arc_task = Arc::new(task);
@@ -324,12 +320,11 @@ impl TaskScheduler {
             time: timestamp,
             interval: delay,
             key: key.to_string(),
-            arg:arg.clone(), // ← 新增参数 arg
+            arg,
             task: arc_task,
             resp: resp_tx,
         };
         
-        // 发送任务请求，附带 result_sender
         self.sender.send(req).await.map_err(|_| "发送失败".to_string())?;
         resp_rx.await.unwrap_or_else(|_| Err("接收失败".to_string()))
     }
