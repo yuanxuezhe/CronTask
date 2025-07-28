@@ -1,6 +1,7 @@
 mod taskscheduler;
 mod crontask;
 mod task;
+mod consts;
 
 use tokio::signal;
 use dbcore::Database;
@@ -24,10 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 创建任务管理器
     // 参数说明：重载间隔10秒，tick间隔1秒，总槽位86400，非高精度模式
-    let _cron_task = CronTask::new(10000, 1000, 86400, false, db);
+    let cron_task = CronTask::new(10000, 1000, 86400, false, db);
 
     println!("时间轮运行中...");
     
+    // 打印缓存中的任务列表
+    let tasks = cron_task.get_all_tasks_from_cache().await;
+    println!("缓存中的任务列表: {:?}", tasks);
     // 等待 Ctrl+C 信号
     signal::ctrl_c().await.expect("监听信号失败");
     println!("收到 Ctrl+C，停止所有任务...");

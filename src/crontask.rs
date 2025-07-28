@@ -8,21 +8,7 @@ use dbcore::Database;
 use std::collections::{HashMap, HashSet};
 use std::mem::drop;
 use tokio::sync::Mutex;
-
-// 常量定义
-const RELOAD_TASK_NAME: &str = "__reload_tasks__";
-const DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-const TASK_KEY_SEPARATOR: &str = "|";
-
-// 任务状态常量
-const TASK_STATUS_UNMONITORED: i32 = 0;
-const TASK_STATUS_MONITORING: i32 = 1;
-const TASK_STATUS_RETRY: i32 = 2;
-
-// 任务标签常量
-const TASK_TAG_DELETE: i32 = 0;
-const TASK_TAG_KEEP: i32 = 1;
-const TASK_TAG_NEW: i32 = 2;
+use crate::consts::*;
 
 pub struct InnerState {
     pub taskdetails: Vec<TaskDetail>,
@@ -79,25 +65,21 @@ impl CronTask {
             }
         };
 
-        let mut guard = self.inner.lock().await;
-        guard.tasks = new_tasks;
-
-        // 生成新任务明细
-        let mut task_details_new = Vec::new();
+        // 预先计算所有新任务的时间点，减少锁内计算
+        let mut new_task_details = Vec::new();
         let mut new_keys = HashSet::new();
 
-        for task in guard.tasks.values() {
+        for task in new_tasks.values() {
             let timepoints = task.next_n_schedules(10);
             if timepoints.is_empty() {
                 continue;
             }
-            println!("最近10天内的触发时间点: {:?}", timepoints);
 
             for tp in timepoints {
                 let key = format!("{}{}{}", task.taskid, TASK_KEY_SEPARATOR, tp);
                 new_keys.insert(key.clone());
 
-                task_details_new.push(TaskDetail {
+                new_task_details.push(TaskDetail {
                     taskid: task.taskid,
                     timepoint: tp.to_string(),
                     current_trigger_count: 0,
@@ -107,14 +89,16 @@ impl CronTask {
             }
         }
 
-        // 创建旧任务明细键映射
-        let mut old_map: HashMap<String, usize> = HashMap::new();
-        for (idx, detail) in guard.taskdetails.iter().enumerate() {
-            let key = format!("{}{}{}", detail.taskid, TASK_KEY_SEPARATOR, detail.timepoint);
-            old_map.insert(key, idx);
-        }
+        // 获取锁并更新状态
+        let mut guard = self.inner.lock().await;
+        
+        // 创建旧任务明细键映射（优化：使用更高效的数据结构）
+        let old_keys: HashSet<String> = guard.taskdetails
+            .iter()
+            .map(|detail| format!("{}{}{}", detail.taskid, TASK_KEY_SEPARATOR, detail.timepoint))
+            .collect();
 
-        // 标记和修改原始 taskdetails
+        // 标记需要保留的任务
         for detail in guard.taskdetails.iter_mut() {
             let key = format!("{}{}{}", detail.taskid, TASK_KEY_SEPARATOR, detail.timepoint);
             if new_keys.contains(&key) && detail.status == TASK_STATUS_MONITORING {
@@ -124,15 +108,16 @@ impl CronTask {
             }
         }
 
-        // 添加新任务
-        for detail in task_details_new {
+        // 添加新任务（优化：只添加真正的新任务）
+        for detail in new_task_details {
             let key = format!("{}{}{}", detail.taskid, TASK_KEY_SEPARATOR, detail.timepoint);
-            if !old_map.contains_key(&key) {
-                let mut new_detail = detail;
-                new_detail.tag = TASK_TAG_NEW;
-                guard.taskdetails.push(new_detail);
+            if !old_keys.contains(&key) {
+                guard.taskdetails.push(detail);
             }
         }
+
+        // 更新任务映射
+        guard.tasks = new_tasks;
 
         drop(guard);
 
@@ -141,7 +126,7 @@ impl CronTask {
     }
 
     /// 从数据库加载任务
-    async fn load_tasks_from_db(&self) -> Result<HashMap<i32, Task>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn load_tasks_from_db(&self) -> Result<HashMap<i32, Task>, Box<dyn std::error::Error>> {
         let rs = self.db.open("select * from task where taskid >= ?").set_param(0).query(&self.db).await?;
         let mut tasks = HashMap::new();
 
@@ -167,81 +152,101 @@ impl CronTask {
         Ok(tasks)
     }
 
+    /// 从缓存中获取所有任务
+    pub async fn get_all_tasks_from_cache(&self) -> HashMap<i32, Task> {
+        let guard = self.inner.lock().await;
+        guard.tasks.clone()
+    }
+
     /// 重新调度所有任务
     async fn reschedule_all(self: &Arc<Self>) {
-        let mut guard = self.inner.lock().await;
-        let InnerState { taskdetails, tasks } = &mut *guard;
+        // 收集需要处理的任务信息
+        let mut to_cancel = Vec::new();
+        let mut to_schedule = Vec::new();
+        let mut taskdetail_updates = Vec::new();
 
-        for taskdetail in taskdetails.iter_mut() {
-            let task = match tasks.get_mut(&taskdetail.taskid) {
-                Some(task) => task,
-                None => {
-                    println!("任务ID {} 不存在", taskdetail.taskid);
-                    continue;
-                }
-            };
+        {
+            let mut guard = self.inner.lock().await;
+            let InnerState { taskdetails, tasks } = &mut *guard;
 
-            let ndt = match NaiveDateTime::parse_from_str(&taskdetail.timepoint, DATETIME_FORMAT) {
-                Ok(dt) => dt,
-                Err(e) => {
-                    eprintln!("时间点解析失败: {} - {}", taskdetail.timepoint, e);
-                    continue;
-                }
-            };
-
-            // 处理需要取消的任务
-            if taskdetail.tag == TASK_TAG_DELETE {
-                println!("TaskID:{}({}|{})已完成", task.taskid, task.taskname, taskdetail.timepoint);
-                
-                if taskdetail.status == TASK_STATUS_MONITORING {
-                    match self.cancel(
-                        ndt,
-                        (task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap(),
-                        format!("{}{}{}", task.taskid, TASK_KEY_SEPARATOR, taskdetail.timepoint),
-                    ).await {
-                        Ok(_) => {
-                            taskdetail.status = TASK_STATUS_UNMONITORED;
-                            println!("TaskID:{}({}|{})时间轮中取消成功", task.taskid, task.taskname, taskdetail.timepoint);
-                        },
-                        Err(e) => {
-                            eprintln!("TaskID:{}({}|{})时间轮中取消失败: {}", task.taskid, task.taskname, taskdetail.timepoint, e);
-                        },
+            for taskdetail in taskdetails.iter_mut() {
+                let task = match tasks.get(&taskdetail.taskid) {
+                    Some(task) => task,
+                    None => {
+                        eprintln!("任务ID {} 不存在", taskdetail.taskid);
+                        continue;
                     }
-                }
-                continue;
-            }
+                };
 
-            // 跳过已在监控中的任务
-            if taskdetail.status != TASK_STATUS_UNMONITORED {
-                println!("TaskID:{}({}|{})已在监控中，跳过调度", task.taskid, task.taskname, taskdetail.timepoint);
-                continue;
+                let ndt = match NaiveDateTime::parse_from_str(&taskdetail.timepoint, DATETIME_FORMAT) {
+                    Ok(dt) => dt,
+                    Err(e) => {
+                        eprintln!("时间点解析失败: {} - {}", taskdetail.timepoint, e);
+                        continue;
+                    }
+                };
+
+                let task_key = format!("{}{}{}", task.taskid, TASK_KEY_SEPARATOR, taskdetail.timepoint);
+                let delay_ms = (task.retry_interval * taskdetail.current_trigger_count) as u64;
+
+                // 处理需要取消的任务
+                if taskdetail.tag == TASK_TAG_DELETE {
+                    if taskdetail.status == TASK_STATUS_MONITORING {
+                        to_cancel.push((ndt, delay_ms, task_key));
+                    }
+                    continue;
+                }
+
+                // 跳过已在监控中的任务
+                if taskdetail.status != TASK_STATUS_UNMONITORED {
+                    continue;
+                }
+                
+                // 收集需要调度的任务
+                to_schedule.push((
+                    ndt,
+                    delay_ms,
+                    task_key.clone(),
+                    self.build_task_message(task.discribe.clone(), taskdetail.current_trigger_count),
+                    taskdetail.taskid,
+                    taskdetail.timepoint.clone(),
+                ));
+
+                // 记录需要更新的任务明细
+                taskdetail_updates.push((taskdetail.taskid, taskdetail.timepoint.clone()));
             }
-            
-            // 调度新任务
-            match self.schedule(
-                ndt,
-                (task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap(),
-                format!("{}{}{}", task.taskid, TASK_KEY_SEPARATOR, taskdetail.timepoint),
-                self.build_task_message(task.discribe.clone(), taskdetail.current_trigger_count),
-            ).await {
-                Ok(msg) => {
-                    taskdetail.status = TASK_STATUS_MONITORING;
-                    println!("TaskID:{}({}|{})添加任务成功： {}", 
-                        task.taskid, task.taskname, 
-                        ndt + Duration::from_millis((task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap()), 
-                        msg);
+        }
+
+        // 批量取消任务
+        for (ndt, delay_ms, task_key) in to_cancel {
+            match self.cancel(ndt, delay_ms, task_key.clone()).await {
+                Ok(_) => println!("任务取消成功: {}", task_key),
+                Err(e) => eprintln!("任务取消失败: {} - {}", task_key, e),
+            }
+        }
+
+        // 批量调度任务
+        for (ndt, delay_ms, task_key, message, taskid, timepoint) in to_schedule {
+            match self.schedule(ndt, delay_ms, task_key.clone(), message).await {
+                Ok(_) => {
+                    // 更新任务状态
+                    let mut guard = self.inner.lock().await;
+                    if let Some(detail) = guard.taskdetails
+                        .iter_mut()
+                        .find(|d| d.taskid == taskid && d.timepoint == timepoint) {
+                        detail.status = TASK_STATUS_MONITORING;
+                    }
+                    println!("任务调度成功: {}", task_key);
                 },
                 Err(e) => {
-                    eprintln!("TaskID:{}({}|{})添加任务失败： {}", 
-                        task.taskid, task.taskname, 
-                        ndt + Duration::from_millis((task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap()), 
-                        e);
+                    eprintln!("任务调度失败: {} - {}", task_key, e);
                 },
             }
         }
 
         // 清理已删除的任务
-        taskdetails.retain(|detail| detail.tag != TASK_TAG_DELETE || detail.status != TASK_STATUS_UNMONITORED);
+        let mut guard = self.inner.lock().await;
+        guard.taskdetails.retain(|detail| detail.tag != TASK_TAG_DELETE || detail.status != TASK_STATUS_UNMONITORED);
     }
 
     fn build_task_message(&self, discribe: String, current_trigger_count: i32) -> String {
@@ -333,49 +338,73 @@ impl CronTask {
             }
         };
 
-        let mut guard = self.inner.lock().await;
+        // 优化：减少锁持有时间，先获取必要数据
+        let (task, taskdetail) = {
+            let guard = self.inner.lock().await;
+            
+            let task = match guard.tasks.get(&task_id) {
+                Some(task) => task.clone(),
+                None => {
+                    eprintln!("任务ID {} 不存在", task_id);
+                    return;
+                }
+            };
 
-        let task = match guard.tasks.get(&task_id) {
-            Some(task) => task.clone(),
+            let taskdetail = guard.taskdetails
+                .iter()
+                .find(|detail| format!("{}{}{}", detail.taskid, TASK_KEY_SEPARATOR, detail.timepoint) == key)
+                .cloned();
+
+            (task, taskdetail)
+        };
+
+        let mut taskdetail = match taskdetail {
+            Some(detail) => detail,
             None => {
-                eprintln!("任务ID {} 不存在", task_id);
+                eprintln!("任务明细不存在: {}", key);
                 return;
             }
         };
 
-        for taskdetail in guard.taskdetails.iter_mut() {
-            if format!("{}{}{}", taskdetail.taskid, TASK_KEY_SEPARATOR, taskdetail.timepoint) == key {
-                if taskdetail.current_trigger_count >= task.retry_count {
-                    println!("任务 {} 达到最大重试次数，停止调度", task.taskname);
-                    taskdetail.status = TASK_STATUS_UNMONITORED;
-                    return;
-                }
-                
-                // 重新订阅
-                taskdetail.current_trigger_count += 1;
-
-                match self.schedule(
-                    time_point,
-                    (task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap(),
-                    key.clone(),
-                    self.build_task_message(task.discribe.clone(), taskdetail.current_trigger_count),
-                ).await {
-                    Ok(msg) => {
-                        taskdetail.status = TASK_STATUS_RETRY;
-                        println!("TaskID:{}({}|{})添加任务成功： {}", 
-                            task.taskid, task.taskname, 
-                            time_point + Duration::from_millis((task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap()), 
-                            msg);
-                    },
-                    Err(e) => {
-                        taskdetail.status = TASK_STATUS_UNMONITORED;
-                        eprintln!("TaskID:{}({}|{})添加任务失败： {}", 
-                            task.taskid, task.taskname, 
-                            time_point + Duration::from_millis((task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap()), 
-                            e);
-                    },
-                }
+        if taskdetail.current_trigger_count >= task.retry_count {
+            println!("任务 {} 达到最大重试次数，停止调度", task.taskname);
+            taskdetail.status = TASK_STATUS_UNMONITORED;
+            
+            // 更新状态
+            let mut guard = self.inner.lock().await;
+            if let Some(detail) = guard.taskdetails
+                .iter_mut()
+                .find(|d| format!("{}{}{}", d.taskid, TASK_KEY_SEPARATOR, d.timepoint) == key) {
+                *detail = taskdetail;
             }
+            return;
+        }
+        
+        // 重新订阅
+        taskdetail.current_trigger_count += 1;
+
+        match self.schedule(
+            time_point,
+            (task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap(),
+            key.clone(),
+            self.build_task_message(task.discribe.clone(), taskdetail.current_trigger_count),
+        ).await {
+            Ok(_) => {
+                taskdetail.status = TASK_STATUS_RETRY;
+                println!("任务重试调度成功: {}", key);
+            },
+            Err(e) => {
+                taskdetail.status = TASK_STATUS_UNMONITORED;
+                eprintln!("任务重试调度失败: {} - {}", key, e);
+            },
+        }
+
+        // 更新状态
+        let mut guard = self.inner.lock().await;
+        if let Some(detail) = guard.taskdetails
+            .iter_mut()
+            .find(|d| format!("{}{}{}", d.taskid, TASK_KEY_SEPARATOR, d.timepoint) == key) {
+            *detail = taskdetail;
         }
     }
 }

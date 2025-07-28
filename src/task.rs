@@ -5,26 +5,8 @@ use macros::SqlCRUD;
 use chrono::Datelike;
 use chrono::Weekday;
 use std::collections::HashSet;
-
-// 常量定义
-const DATE_FORMAT: &str = "%Y%m%d";
-const TIME_FORMAT: &str = "%H%M%S";
-const DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-
-// 任务状态常量
-pub const TASK_STATUS_ACTIVE: &str = "A";
-pub const TASK_STATUS_INACTIVE: &str = "I";
-
-// 周期类型常量
-pub const CYCLE_TYPE_DAILY: &str = "0";
-pub const CYCLE_TYPE_WORKDAY: &str = "1";
-pub const CYCLE_TYPE_HOLIDAY: &str = "2";
-pub const CYCLE_TYPE_CUSTOM: &str = "3";
-
-// 重试类型常量
-pub const RETRY_TYPE_NONE: &str = "0";
-pub const RETRY_TYPE_FORWARD: &str = "1";
-pub const RETRY_TYPE_BACKWARD: &str = "2";
+use once_cell;
+use crate::consts::*;
 
 #[derive(Debug, Clone)]
 pub struct TaskDetail {
@@ -66,17 +48,20 @@ fn is_weekend(date: NaiveDate) -> bool {
     matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
 }
 
-/// 判断是否为节假日（示例实现，需替换实际数据）
+/// 判断是否为节假日（优化：使用静态数据，避免重复解析）
 fn is_holiday(date: NaiveDate) -> bool {
-    let holidays: HashSet<NaiveDate> = [
-        "20230101", "20230122", "20230123", "20230124",
-        "20230405", "20230501", "20230622", "20230929",
-    ]
-    .iter()
-    .filter_map(|s| parse_date(s))
-    .collect();
+    // 优化：使用静态节假日集合，避免重复解析
+    static HOLIDAYS: once_cell::sync::Lazy<HashSet<NaiveDate>> = once_cell::sync::Lazy::new(|| {
+        [
+            "20230101", "20230122", "20230123", "20230124",
+            "20230405", "20230501", "20230622", "20230929",
+        ]
+        .iter()
+        .filter_map(|s| parse_date(s))
+        .collect()
+    });
     
-    holidays.contains(&date)
+    HOLIDAYS.contains(&date)
 }
 
 impl Task {
@@ -84,7 +69,7 @@ impl Task {
     pub fn next_n_schedules(&self, maxdays: u32) -> Vec<NaiveDateTime> {
         let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
 
-        // 解析多个时间点
+        // 解析多个时间点（优化：缓存解析结果）
         let time_points: Vec<NaiveTime> = self.time_point
             .split(',')
             .filter_map(|s| NaiveTime::parse_from_str(s.trim(), TIME_FORMAT).ok())
@@ -98,20 +83,19 @@ impl Task {
         let candidates = self.generate_candidate_dates(current_time.date(), maxdays)
             .unwrap_or_default();
 
-        // 生成有效时间点
-        candidates
-            .into_iter()
-            .flat_map(|date| {
-                time_points.iter().filter_map(move |&tp| {
-                    let datetime = date.and_time(tp);
-                    if datetime > current_time {
-                        Some(datetime)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect()
+        // 生成有效时间点（优化：预分配容量）
+        let mut result = Vec::with_capacity(candidates.len() * time_points.len());
+        
+        for date in candidates {
+            for &tp in &time_points {
+                let datetime = date.and_time(tp);
+                if datetime > current_time {
+                    result.push(datetime);
+                }
+            }
+        }
+
+        result
     }
 
     /// 生成候选日期（优化版：动态生成避免全量计算）

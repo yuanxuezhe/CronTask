@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::hint::spin_loop;
 use tokio::sync::{mpsc, Mutex, oneshot};
 
-// 常量定义
+// 本地常量定义
 const CHANNEL_BUFFER_SIZE: usize = 1000;
 
 // 任务类型定义
