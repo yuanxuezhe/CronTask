@@ -11,7 +11,6 @@ impl crate::crontask::core::CronTask {
     pub async fn reschedule_all(self: &Arc<Self>) {
         let mut to_cancel = Vec::new();
         let mut to_schedule = Vec::new();
-        let mut taskdetail_updates = Vec::new();
         {
             let mut guard = self.inner.lock().await;
             let InnerState { taskdetails, tasks } = &mut *guard;
@@ -49,7 +48,6 @@ impl crate::crontask::core::CronTask {
                     taskdetail.taskid,
                     taskdetail.timepoint.clone(),
                 ));
-                taskdetail_updates.push((taskdetail.taskid, taskdetail.timepoint.clone()));
             }
         }
         for (ndt, delay_ms, task_key) in to_cancel {
@@ -153,16 +151,16 @@ impl crate::crontask::core::CronTask {
     /// 根据任务描述和当前触发次数构建任务消息
     /// 
     /// # 参数
-    /// * `discribe` - 任务描述
+    /// * `description` - 任务描述（修复了字段名拼写错误）
     /// * `current_trigger_count` - 当前触发次数
     /// 
     /// # 返回值
     /// 返回构建好的任务消息字符串
-    pub fn build_task_message(&self, discribe: String, current_trigger_count: i32) -> String {
+    pub fn build_task_message(&self, description: String, current_trigger_count: i32) -> String {
         if current_trigger_count == 0 {
-            discribe
+            description
         } else {
-            format!("{}(重复提醒第{}次)", discribe, current_trigger_count)
+            format!("{}（重复提醒第{}次）", description, current_trigger_count)
         }
     }
     
@@ -181,7 +179,7 @@ impl crate::crontask::core::CronTask {
         timestamp: NaiveDateTime, 
         millis: u64, 
         key: String,
-        arg: String, 
+        arg: String,
     ) -> Result<String, String> {
         println!("crontask::schedule 调度任务: {} at {} + {}ms", key, timestamp, millis);
         let self_clone = self.clone();
@@ -197,12 +195,12 @@ impl crate::crontask::core::CronTask {
     /// 从时间轮中移除指定任务
     /// 
     /// # 参数
-    /// * `timestamp` - 任务原定触发时间
+    /// * `timestamp` - 任务原定触发时间（NaiveDateTime 类型）
     /// * `millis` - 原定延迟毫秒数
     /// * `key` - 任务唯一标识符
     /// 
     /// # 返回值
-    /// 成功时返回操作结果信息，失败时返回错误信息
+    /// 成功时返回操作结果信息，失败时返回错误信息（Result<String, String> 类型）
     pub async fn cancel(
         self: &Arc<Self>,
         timestamp: NaiveDateTime, 

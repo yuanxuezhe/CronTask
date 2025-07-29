@@ -50,8 +50,8 @@ impl CronTask {
             let _ = instance_clone.schedule(
                 chrono::Local::now().naive_local(), 
                 2000, 
-                reload_name.clone(), 
-                reload_name.clone()
+                reload_name.clone(),
+                reload_name.clone(),
             ).await;
             println!("CronTask initialized");
         });

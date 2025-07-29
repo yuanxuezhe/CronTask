@@ -7,7 +7,7 @@ impl crate::crontask::core::CronTask {
     /// # 返回值
     /// 成功时返回包含所有任务的HashMap，键为taskid，值为Task对象
     /// 失败时返回错误信息
-    pub async fn load_tasks_from_db(&self) -> Result<HashMap<i32, Task>, Box<dyn std::error::Error>> {
+    pub async fn load_tasks_from_db(&self) -> Result<HashMap<i32, Task>, Box<dyn std::error::Error + Send + Sync>> {
         let rs = self.db.open("select * from task where taskid >= ?").set_param(0).query(&self.db).await?;
         let mut tasks = HashMap::new();
 

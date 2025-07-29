@@ -65,7 +65,10 @@ impl TimeWheel {
         let duration = timestamp - self.base_time;
         let nanos = duration
             .num_nanoseconds()
-            .expect("时间超出范围，计算失败") as u64;
+            .unwrap_or_else(|| {
+                log::warn!("时间计算溢出，使用默认值");
+                0
+            }) as u64;
         let tick_index = nanos / self.tick_duration.as_nanos() as u64;
         tick_index as usize
     }
@@ -160,12 +163,21 @@ impl TimeWheel {
     /// 使用tokio::time::interval驱动时间轮运行
     pub async fn run(&self) {
         let now = SystemTime::now();
-        let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+        let since_epoch = now.duration_since(UNIX_EPOCH);
+        if let Err(e) = since_epoch {
+            log::error!("获取系统时间失败: {}", e);
+            return;
+        }
+        let since_epoch = since_epoch.unwrap();
         let now_ns = since_epoch.as_nanos();
         let tick_ns = self.tick_duration.as_nanos();
         let next_tick_ns = ((now_ns / tick_ns) + 1) * tick_ns;
         let remaining_ns = next_tick_ns - now_ns;
-        spin_sleep::sleep(Duration::from_nanos(remaining_ns.try_into().unwrap()));
+        
+        if let Ok(remaining) = remaining_ns.try_into() {
+            spin_sleep::sleep(Duration::from_nanos(remaining));
+        }
+        
         let mut interval = tokio::time::interval(self.tick_duration);
         let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local());
         self.current_slot.store(current_slot, Ordering::Release);
@@ -182,9 +194,15 @@ impl TimeWheel {
     
     /// 使用自旋锁驱动时间轮运行，提供更高精度的时间控制
     pub async fn run_highprecision(&self) {
+        let now = SystemTime::now();
+        let dur = now.duration_since(UNIX_EPOCH);
+        if let Err(e) = dur {
+            log::error!("获取系统时间失败: {}", e);
+            return;
+        }
+        let dur = dur.unwrap();
+        
         let mut next_tick = {
-            let now = SystemTime::now();
-            let dur = now.duration_since(UNIX_EPOCH).unwrap();
             let now_ns = dur.as_nanos();
             let tick_ns = self.tick_duration.as_nanos();
             let next_tick_ns = ((now_ns / tick_ns) + 1) * tick_ns;

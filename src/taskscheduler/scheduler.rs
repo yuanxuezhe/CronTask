@@ -8,6 +8,16 @@ use crate::taskscheduler::timewheel::TimeWheel;
 
 const CHANNEL_BUFFER_SIZE: usize = 1000;
 
+#[derive(Debug, thiserror::Error)]
+pub enum SchedulerError {
+    #[error("发送任务请求失败")]
+    SendError,
+    #[error("接收响应失败")]
+    RecvError,
+    #[error("时间轮错误: {0}")]
+    TimeWheelError(String),
+}
+
 pub struct TaskScheduler {
     /// 任务请求发送通道
     pub sender: mpsc::Sender<TaskRequest>,
