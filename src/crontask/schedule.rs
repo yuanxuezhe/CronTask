@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use crate::task::TaskDetail;
 
 impl crate::crontask::core::CronTask {
-    /// 重新调度所有任务
+    /// 检查所有任务的状态并根据需要进行调度或取消调度
     pub async fn reschedule_all(self: &Arc<Self>) {
         let mut to_cancel = Vec::new();
         let mut to_schedule = Vec::new();
@@ -89,7 +89,8 @@ impl crate::crontask::core::CronTask {
         let mut guard = self.inner.lock().await;
         guard.taskdetails.retain(|detail| detail.tag != TASK_TAG_DELETE || detail.status != TASK_STATUS_UNMONITORED);
     }
-    /// 重新加载任务（从数据库加载并刷新缓存、调度）
+    
+    /// 从数据库重新加载所有任务，并更新内部状态和调度
     pub async fn reload_tasks(self: &Arc<Self>) {
         // 从数据库加载新任务
         let new_tasks = match self.load_tasks_from_db().await {
@@ -148,6 +149,15 @@ impl crate::crontask::core::CronTask {
         // 重新调度所有任务
         self.clone().reschedule_all().await;
     }
+    
+    /// 根据任务描述和当前触发次数构建任务消息
+    /// 
+    /// # 参数
+    /// * `discribe` - 任务描述
+    /// * `current_trigger_count` - 当前触发次数
+    /// 
+    /// # 返回值
+    /// 返回构建好的任务消息字符串
     pub fn build_task_message(&self, discribe: String, current_trigger_count: i32) -> String {
         if current_trigger_count == 0 {
             discribe
@@ -155,6 +165,17 @@ impl crate::crontask::core::CronTask {
             format!("{}(重复提醒第{}次)", discribe, current_trigger_count)
         }
     }
+    
+    /// 将任务添加到时间轮中进行调度
+    /// 
+    /// # 参数
+    /// * `timestamp` - 任务触发时间
+    /// * `millis` - 延迟毫秒数
+    /// * `key` - 任务唯一标识符
+    /// * `arg` - 任务参数
+    /// 
+    /// # 返回值
+    /// 成功时返回任务key，失败时返回错误信息
     pub async fn schedule(
         self: &Arc<Self>,
         timestamp: NaiveDateTime, 
@@ -172,6 +193,16 @@ impl crate::crontask::core::CronTask {
             move |key, eventdata| self_clone.on_call_back(key, eventdata),
         ).await
     }
+    
+    /// 从时间轮中移除指定任务
+    /// 
+    /// # 参数
+    /// * `timestamp` - 任务原定触发时间
+    /// * `millis` - 原定延迟毫秒数
+    /// * `key` - 任务唯一标识符
+    /// 
+    /// # 返回值
+    /// 成功时返回操作结果信息，失败时返回错误信息
     pub async fn cancel(
         self: &Arc<Self>,
         timestamp: NaiveDateTime, 
@@ -185,4 +216,4 @@ impl crate::crontask::core::CronTask {
             key,
         ).await
     }
-} 
+}

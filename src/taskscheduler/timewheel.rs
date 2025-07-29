@@ -11,18 +11,32 @@ use tokio::sync::Mutex;
 pub type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 
 pub struct TimeWheelSlot {
+    /// 存储任务的HashMap，键为任务key，值为任务函数和参数
     pub tasks: Mutex<HashMap<String, (Task, String)>>,
 }
 
 pub struct TimeWheel {
+    /// 时间轮槽位数组
     pub slots: Vec<ArcSwap<TimeWheelSlot>>,
+    /// 当前槽位索引
     pub current_slot: Arc<AtomicUsize>,
+    /// 滴答间隔
     pub tick_duration: Duration,
+    /// 总槽数
     pub total_slots: usize,
+    /// 基准时间
     pub base_time: NaiveDateTime,
 }
 
 impl TimeWheel {
+    /// 创建新的时间轮
+    /// 
+    /// # 参数
+    /// * `tick_duration` - 滴答间隔
+    /// * `total_slots` - 总槽数
+    /// 
+    /// # 返回值
+    /// 返回新的时间轮实例
     pub fn new(tick_duration: Duration, total_slots: usize) -> Self {
         let slots = (0..total_slots)
             .map(|_| {
@@ -39,6 +53,14 @@ impl TimeWheel {
             base_time: Utc::now().with_timezone(&Shanghai).naive_local(),
         }
     }
+    
+    /// 获取时间对应的绝对槽位
+    /// 
+    /// # 参数
+    /// * `timestamp` - 时间戳
+    /// 
+    /// # 返回值
+    /// 返回时间对应的绝对槽位索引
     pub fn get_real_slot(&self, timestamp: NaiveDateTime) -> usize {
         let duration = timestamp - self.base_time;
         let nanos = duration
@@ -47,9 +69,29 @@ impl TimeWheel {
         let tick_index = nanos / self.tick_duration.as_nanos() as u64;
         tick_index as usize
     }
+    
+    /// 获取时间对应的槽位（取模后的结果）
+    /// 
+    /// # 参数
+    /// * `timestamp` - 时间戳
+    /// 
+    /// # 返回值
+    /// 返回时间对应的槽位索引
     pub fn get_slot(&self, timestamp: NaiveDateTime) -> usize {
         self.get_real_slot(timestamp) % self.total_slots
     }
+    
+    /// 添加任务到时间轮
+    /// 
+    /// # 参数
+    /// * `timestamp` - 任务触发时间
+    /// * `delay` - 延迟时间
+    /// * `key` - 任务唯一标识符
+    /// * `arg` - 任务参数
+    /// * `task` - 任务执行函数
+    /// 
+    /// # 返回值
+    /// 成功时返回任务key，失败时返回错误信息
     pub async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, String> {
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
         let current_slot = self.get_real_slot(now);
@@ -75,6 +117,16 @@ impl TimeWheel {
         tasks.insert(key.clone(), (task, arg));
         Ok(key)
     }
+    
+    /// 从时间轮中删除任务
+    /// 
+    /// # 参数
+    /// * `timestamp` - 任务原定触发时间
+    /// * `delay` - 原定延迟时间
+    /// * `key` - 任务唯一标识符
+    /// 
+    /// # 返回值
+    /// 返回操作结果信息
     pub async fn del_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String) -> Result<String, String> {
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
         let current_slot = self.get_real_slot(now);
@@ -104,6 +156,8 @@ impl TimeWheel {
             None => Ok("任务不存在,无需取消".to_string()),
         }
     }
+    
+    /// 使用tokio::time::interval驱动时间轮运行
     pub async fn run(&self) {
         let now = SystemTime::now();
         let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
@@ -126,6 +180,7 @@ impl TimeWheel {
         }
     }
     
+    /// 使用自旋锁驱动时间轮运行，提供更高精度的时间控制
     pub async fn run_highprecision(&self) {
         let mut next_tick = {
             let now = SystemTime::now();
@@ -154,7 +209,7 @@ impl TimeWheel {
         }
     }
     
-    /// 处理当前槽位的任务
+    /// 执行当前槽位中的所有任务
     async fn process_current_slot(&self) {
         let current = self.current_slot.load(Ordering::Relaxed);
         let slot = self.slots[current].load();
@@ -168,4 +223,4 @@ impl TimeWheel {
             });
         }
     }
-} 
+}

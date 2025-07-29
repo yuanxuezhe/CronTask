@@ -5,6 +5,13 @@ use crate::task::holiday::{is_holiday, is_weekend, parse_date};
 use crate::consts::*;
 
 impl crate::task::model::Task {
+    /// 根据任务的调度规则计算接下来指定天数内的所有调度时间点
+    /// 
+    /// # 参数
+    /// * `maxdays` - 最大天数
+    /// 
+    /// # 返回值
+    /// 返回未来指定天数内的所有调度时间点列表
     pub fn next_n_schedules(&self, maxdays: u32) -> Vec<NaiveDateTime> {
         let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
         let time_points: Vec<NaiveTime> = self.time_point
@@ -27,6 +34,15 @@ impl crate::task::model::Task {
         }
         result
     }
+    
+    /// 根据任务调度规则生成未来指定天数内的候选日期列表
+    /// 
+    /// # 参数
+    /// * `start` - 开始日期
+    /// * `max_days` - 最大天数
+    /// 
+    /// # 返回值
+    /// 返回候选日期列表
     fn generate_candidate_dates(&self, start: NaiveDate, max_days: u32) -> Option<Vec<NaiveDate>> {
         let mut dates = Vec::with_capacity(max_days as usize);
         let mut current = start;
@@ -43,6 +59,14 @@ impl crate::task::model::Task {
         }
         Some(dates)
     }
+    
+    /// 根据任务的周期类型和调度规则检查指定日期是否有效
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 如果日期有效返回true，否则返回false
     fn is_date_valid(&self, date: NaiveDate) -> bool {
         let in_range = self.check_date(date).unwrap_or(false);
         in_range && match self.cycle_type.as_str() {
@@ -53,20 +77,60 @@ impl crate::task::model::Task {
             _ => false
         }
     }
+    
+    /// 检查指定日期是否在任务的开始日期和结束日期之间
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 成功时返回检查结果，失败时返回错误信息
     fn check_date(&self, date: NaiveDate) -> Result<bool, String> {
         let start = parse_date(&self.start_date).ok_or("无效开始日期")?;
         let end = parse_date(&self.end_date).ok_or("无效结束日期")?;
         Ok(date >= start && date <= end)
     }
+    
+    /// 日常任务每天都有效
+    /// 
+    /// # 参数
+    /// * `_` - 日期参数（未使用）
+    /// 
+    /// # 返回值
+    /// 总是返回true
     fn is_daily_valid(&self, _: NaiveDate) -> bool {
         true
     }
+    
+    /// 工作日任务在非周末且非节假日时有效
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 如果是工作日返回true，否则返回false
     fn is_workday(&self, date: NaiveDate) -> bool {
         !is_holiday(date) && !is_weekend(date)
     }
+    
+    /// 节假日任务仅在节假日时有效
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 如果是节假日返回true，否则返回false
     fn is_holiday(&self, date: NaiveDate) -> bool {
         is_holiday(date)
     }
+    
+    /// 根据任务的周期参数检查指定日期是否有效
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 如果日期符合自定义规则返回true，否则返回false
     fn is_custom_valid(&self, date: NaiveDate) -> bool {
         match self.period.chars().next() {
             Some('D') => true,
@@ -76,6 +140,14 @@ impl crate::task::model::Task {
             _ => false
         }
     }
+    
+    /// 根据任务的周期参数检查指定日期是否为有效的星期几
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 如果日期符合每周规则返回true，否则返回false
     fn check_weekly(&self, date: NaiveDate) -> bool {
         let weekday = date.weekday().number_from_monday(); // 从周一为1开始计算
         self.period[1..]
@@ -83,6 +155,14 @@ impl crate::task::model::Task {
             .filter_map(|c| c.to_digit(10))
             .any(|d| d == weekday)
     }
+    
+    /// 根据任务的周期参数检查指定日期是否为有效的月份中的某一天
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 如果日期符合每月规则返回true，否则返回false
     fn check_monthly(&self, date: NaiveDate) -> bool {
         let day = date.day();
         self.period[1..]
@@ -90,6 +170,14 @@ impl crate::task::model::Task {
             .filter_map(|c| c.to_digit(10))
             .any(|d| d == day)
     }
+    
+    /// 根据任务的周期参数检查指定日期是否为有效的年份中的某一天
+    /// 
+    /// # 参数
+    /// * `date` - 要检查的日期
+    /// 
+    /// # 返回值
+    /// 如果日期符合每年规则返回true，否则返回false
     fn check_yearly(&self, date: NaiveDate) -> bool {
         let md = format!("{:02}{:02}", date.month(), date.day());
         self.period[1..] == md

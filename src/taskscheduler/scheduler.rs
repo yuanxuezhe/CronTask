@@ -9,10 +9,20 @@ use crate::taskscheduler::timewheel::TimeWheel;
 const CHANNEL_BUFFER_SIZE: usize = 1000;
 
 pub struct TaskScheduler {
+    /// 任务请求发送通道
     pub sender: mpsc::Sender<TaskRequest>,
 }
 
 impl TaskScheduler {
+    /// 创建新的任务调度器
+    /// 
+    /// # 参数
+    /// * `tick_duration` - 时间轮滴答间隔
+    /// * `total_slots` - 时间轮总槽数
+    /// * `high_precision` - 是否使用高精度模式
+    /// 
+    /// # 返回值
+    /// 返回新的任务调度器实例
     pub fn new(tick_duration: Duration, total_slots: usize, high_precision: bool) -> Self {
         let (sender, receiver) = mpsc::channel::<TaskRequest>(CHANNEL_BUFFER_SIZE);
         let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
@@ -31,6 +41,11 @@ impl TaskScheduler {
         Self { sender }
     }
     
+    /// 处理来自通道的任务添加和取消请求
+    /// 
+    /// # 参数
+    /// * `receiver` - 任务请求接收通道
+    /// * `time_wheel` - 时间轮实例
     async fn process_requests(mut receiver: mpsc::Receiver<TaskRequest>, time_wheel: Arc<TimeWheel>) {
         while let Some(request) = receiver.recv().await {
             match request {
@@ -46,6 +61,17 @@ impl TaskScheduler {
         }
     }
 
+    /// 将任务添加到时间轮中进行调度
+    /// 
+    /// # 参数
+    /// * `timestamp` - 任务触发时间
+    /// * `delay` - 延迟时间
+    /// * `key` - 任务唯一标识符
+    /// * `arg` - 任务参数
+    /// * `task` - 任务执行函数
+    /// 
+    /// # 返回值
+    /// 成功时返回任务key，失败时返回错误信息
     pub async fn schedule<F, K>(
         &self, 
         timestamp: NaiveDateTime, 
@@ -71,6 +97,16 @@ impl TaskScheduler {
         self.sender.send(req).await.map_err(|_| "发送失败".to_string())?;
         resp_rx.await.unwrap_or_else(|_| Err("接收失败".to_string()))
     }
+    
+    /// 从时间轮中移除指定任务
+    /// 
+    /// # 参数
+    /// * `timestamp` - 任务原定触发时间
+    /// * `delay` - 原定延迟时间
+    /// * `key` - 任务唯一标识符
+    /// 
+    /// # 返回值
+    /// 成功时返回操作结果信息，失败时返回错误信息
     pub async fn cancel<K>(
         &self,
         timestamp: NaiveDateTime,

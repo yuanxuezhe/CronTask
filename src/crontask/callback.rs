@@ -6,12 +6,24 @@ use crate::consts::*;
 use crate::utils::gen_task_key;
 
 impl CronTask {
+    /// 回调函数包装器，在tokio任务中执行实际的回调逻辑
+    /// 
+    /// # 参数
+    /// * `key` - 任务唯一标识符
+    /// * `eventdata` - 任务相关的数据
     pub fn on_call_back(self: &Arc<Self>, key: String, eventdata: String) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             this.on_call_back_inner(key, eventdata).await;
         });
     }
+
+    /// 实际执行回调逻辑的函数
+    /// 
+    /// 处理任务执行，包括重试逻辑和任务状态更新
+    /// # 参数
+    /// * `key` - 任务唯一标识符
+    /// * `eventdata` - 任务相关的数据
     pub async fn on_call_back_inner(self: &Arc<Self>, key: String, eventdata: String) {
         let now = Utc::now().with_timezone(&Shanghai);
         println!("[{}] 执行任务[{}]: {}", now, key, eventdata);
