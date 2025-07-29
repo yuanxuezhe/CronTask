@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use chrono::NaiveDateTime;
 use crate::crontask::state::InnerState;
-use crate::consts::*;
-use crate::utils::*;
+use crate::comm::consts::*;
+use crate::comm::utils::gen_task_key;
 use std::collections::HashSet;
 use crate::task::TaskDetail;
 

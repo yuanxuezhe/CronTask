@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 use std::time::Duration;
 use tokio::sync::oneshot;
 use super::timewheel::Task;
-use crate::error::*;
+use crate::comm::error::TaskSchedulerError;
 
 pub enum TaskRequest {
     Add {

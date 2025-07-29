@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use super::request::TaskRequest;
 use std::sync::Arc;
 use super::timewheel::TimeWheel;
-use crate::error::*;
+use crate::comm::error::TaskSchedulerError;
 
 const CHANNEL_BUFFER_SIZE: usize = 1000;
 

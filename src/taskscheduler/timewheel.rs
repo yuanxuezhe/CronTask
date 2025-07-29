@@ -7,7 +7,7 @@ use chrono_tz::Asia::Shanghai;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::hint::spin_loop;
 use tokio::sync::Mutex;
-use crate::error::*;
+use crate::comm::error::TaskSchedulerError;
 
 pub type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 

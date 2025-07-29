@@ -5,7 +5,8 @@ use crate::crontask::state::InnerState;
 use dbcore::Database;
 use std::collections::HashMap;
 use crate::task::TaskDetail;
-use log::{info, error}; // 添加日志导入
+use crate::comm::consts::RELOAD_TASK_NAME;
+use log::info;
 
 pub struct CronTask {
     /// 任务调度器
@@ -46,51 +47,47 @@ impl CronTask {
         });
 
         let instance_clone = instance.clone();
-        let reload_name = crate::consts::RELOAD_TASK_NAME.to_string();
+        let reload_name = RELOAD_TASK_NAME.to_string();
         
         // 使用更精确的调度间隔
-        let reload_interval = instance.reload_interval;
-        
-        tokio::spawn(async move {
-            loop {
-                match instance_clone.schedule(
-                    chrono::Local::now().naive_local(), 
-                    reload_interval, 
-                    reload_name.clone(),
-                    reload_name.clone(),
-                ).await {
-                    Ok(_) => {
-                        info!("CronTask initialized successfully");
-                        break;
-                    },
-                    Err(e) => {
-                        error!("Failed to initialize CronTask: {}. Retrying in 5 seconds...", e);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                    }
-                }
-            }
+        tokio::task::spawn(async move {
+            let _ = instance_clone.schedule(
+                chrono::Local::now().naive_local(), 
+                reload_millis, 
+                reload_name, 
+                "__reload_tasks__".to_string(),
+            ).await;
         });
-        
+
         instance
     }
-
-    /// 获取当前活跃的任务数量
+    
+    /// 获取活跃任务数量
+    /// 
+    /// # 返回值
+    /// 返回当前监控中的任务数量
     pub async fn active_task_count(&self) -> usize {
-        let inner = self.inner.lock().await;
-        inner.tasks.len()
+        let guard = self.inner.lock().await;
+        guard.taskdetails
+            .iter()
+            .filter(|detail| detail.status == crate::comm::consts::TASK_STATUS_MONITORING)
+            .count()
     }
-
-    /// 获取任务详情
+    
+    /// 获取所有任务详情
+    /// 
+    /// # 返回值
+    /// 返回所有任务详情的副本
     pub async fn get_task_details(&self) -> Vec<TaskDetail> {
-        let inner = self.inner.lock().await;
-        inner.taskdetails.clone()
+        let guard = self.inner.lock().await;
+        guard.taskdetails.clone()
     }
-
-    /// 清除所有任务
+    
+    /// 清空所有任务
     pub async fn clear_all_tasks(&self) {
-        let mut inner = self.inner.lock().await;
-        inner.tasks.clear();
-        inner.taskdetails.clear();
-        info!("All tasks cleared");
+        let mut guard = self.inner.lock().await;
+        guard.taskdetails.clear();
+        guard.tasks.clear();
+        info!("所有任务已清空");
     }
 }
