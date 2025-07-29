@@ -4,19 +4,10 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use super::request::TaskRequest;
 use std::sync::Arc;
-use crate::taskscheduler::timewheel::TimeWheel;
+use super::timewheel::TimeWheel;
+use crate::error::*;
 
 const CHANNEL_BUFFER_SIZE: usize = 1000;
-
-#[derive(Debug, thiserror::Error)]
-pub enum SchedulerError {
-    #[error("发送任务请求失败")]
-    SendError,
-    #[error("接收响应失败")]
-    RecvError,
-    #[error("时间轮错误: {0}")]
-    TimeWheelError(String),
-}
 
 pub struct TaskScheduler {
     /// 任务请求发送通道
@@ -60,13 +51,11 @@ impl TaskScheduler {
         while let Some(request) = receiver.recv().await {
             match request {
                 TaskRequest::Add { time, interval, key, arg, task, resp } => {
-                    let result = time_wheel.add_task(time, interval, key, arg, task).await
-                        .map_err(|e| SchedulerError::TimeWheelError(e.to_string()));
+                    let result = time_wheel.add_task(time, interval, key, arg, task).await;
                     let _ = resp.send(result);
                 }
                 TaskRequest::Cancel { time, interval, key, resp } => {
-                    let result = time_wheel.del_task(time, interval, key).await
-                        .map_err(|e| SchedulerError::TimeWheelError(e.to_string()));
+                    let result = time_wheel.del_task(time, interval, key).await;
                     let _ = resp.send(result);
                 }
             }
@@ -91,7 +80,7 @@ impl TaskScheduler {
         key: K,
         arg: String, 
         task: F
-    ) -> Result<String, SchedulerError>
+    ) -> Result<String, TaskSchedulerError>
     where
         F: Fn(String, String) + Send + Sync + 'static,
         K: ToString,
@@ -106,8 +95,8 @@ impl TaskScheduler {
             task: arc_task,
             resp: resp_tx,
         };
-        self.sender.send(req).await.map_err(|_| SchedulerError::SendError)?;
-        resp_rx.await.map_err(|_| SchedulerError::RecvError)?
+        self.sender.send(req).await.map_err(|_| TaskSchedulerError::SendError)?;
+        resp_rx.await.map_err(|_| TaskSchedulerError::RecvError)?
     }
     
     /// 从时间轮中移除指定任务
@@ -124,7 +113,7 @@ impl TaskScheduler {
         timestamp: NaiveDateTime,
         delay: Duration,
         key: K,
-    ) -> Result<String, SchedulerError>
+    ) -> Result<String, TaskSchedulerError>
     where
         K: ToString,
     {
@@ -135,7 +124,7 @@ impl TaskScheduler {
             key: key.to_string(),
             resp: resp_tx,
         };
-        self.sender.send(req).await.map_err(|_| SchedulerError::SendError)?;
-        resp_rx.await.map_err(|_| SchedulerError::RecvError)?
+        self.sender.send(req).await.map_err(|_| TaskSchedulerError::SendError)?;
+        resp_rx.await.map_err(|_| TaskSchedulerError::RecvError)?
     }
 }

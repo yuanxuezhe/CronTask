@@ -2,7 +2,7 @@ use std::sync::Arc;
 use chrono::NaiveDateTime;
 use crate::crontask::state::InnerState;
 use crate::consts::*;
-use crate::utils::gen_task_key;
+use crate::utils::*;
 use std::collections::HashSet;
 use crate::task::TaskDetail;
 
@@ -113,8 +113,8 @@ impl crate::crontask::core::CronTask {
                     taskid: task.taskid,
                     timepoint: tp.to_string(),
                     current_trigger_count: 0,
-                    status: crate::consts::TASK_STATUS_UNMONITORED,
-                    tag: crate::consts::TASK_TAG_NEW,
+                    status: TASK_STATUS_UNMONITORED,
+                    tag: TASK_TAG_NEW,
                 });
             }
         }
@@ -128,10 +128,10 @@ impl crate::crontask::core::CronTask {
         // 标记需要保留的任务
         for detail in guard.taskdetails.iter_mut() {
             let key = gen_task_key(detail.taskid, &detail.timepoint);
-            if new_keys.contains(&key) && detail.status == crate::consts::TASK_STATUS_MONITORING {
-                detail.tag = crate::consts::TASK_TAG_KEEP;
+            if new_keys.contains(&key) && detail.status == TASK_STATUS_MONITORING {
+                detail.tag = TASK_TAG_KEEP;
             } else {
-                detail.tag = crate::consts::TASK_TAG_DELETE;
+                detail.tag = TASK_TAG_DELETE;
             }
         }
         // 添加新任务（只添加真正的新任务）
@@ -183,13 +183,18 @@ impl crate::crontask::core::CronTask {
     ) -> Result<String, String> {
         println!("crontask::schedule 调度任务: {} at {} + {}ms", key, timestamp, millis);
         let self_clone = self.clone();
-        self.taskscheduler.schedule(
+        let result = self.taskscheduler.schedule(
             timestamp,
             std::time::Duration::from_millis(millis),
             key,
             arg,
             move |key, eventdata| self_clone.on_call_back(key, eventdata),
-        ).await.map_err(|e| e.to_string())
+        ).await;
+        
+        match result {
+            Ok(key) => Ok(key),
+            Err(e) => Err(e.to_string()),
+        }
     }
     
     /// 从时间轮中移除指定任务
@@ -208,10 +213,15 @@ impl crate::crontask::core::CronTask {
         key: String,
     ) -> Result<String, String> {
         println!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp, millis);
-        self.taskscheduler.cancel(
+        let result = self.taskscheduler.cancel(
             timestamp,
             std::time::Duration::from_millis(millis),
             key,
-        ).await.map_err(|e| e.to_string())
+        ).await;
+        
+        match result {
+            Ok(result) => Ok(result),
+            Err(e) => Err(e.to_string()),
+        }
     }
 }
