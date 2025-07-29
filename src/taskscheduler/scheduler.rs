@@ -60,11 +60,13 @@ impl TaskScheduler {
         while let Some(request) = receiver.recv().await {
             match request {
                 TaskRequest::Add { time, interval, key, arg, task, resp } => {
-                    let result = time_wheel.add_task(time, interval, key, arg, task).await;
+                    let result = time_wheel.add_task(time, interval, key, arg, task).await
+                        .map_err(|e| SchedulerError::TimeWheelError(e.to_string()));
                     let _ = resp.send(result);
                 }
                 TaskRequest::Cancel { time, interval, key, resp } => {
-                    let result = time_wheel.del_task(time, interval, key).await;
+                    let result = time_wheel.del_task(time, interval, key).await
+                        .map_err(|e| SchedulerError::TimeWheelError(e.to_string()));
                     let _ = resp.send(result);
                 }
             }
@@ -89,7 +91,7 @@ impl TaskScheduler {
         key: K,
         arg: String, 
         task: F
-    ) -> Result<String, String>
+    ) -> Result<String, SchedulerError>
     where
         F: Fn(String, String) + Send + Sync + 'static,
         K: ToString,
@@ -104,8 +106,8 @@ impl TaskScheduler {
             task: arc_task,
             resp: resp_tx,
         };
-        self.sender.send(req).await.map_err(|_| "发送失败".to_string())?;
-        resp_rx.await.unwrap_or_else(|_| Err("接收失败".to_string()))
+        self.sender.send(req).await.map_err(|_| SchedulerError::SendError)?;
+        resp_rx.await.map_err(|_| SchedulerError::RecvError)?
     }
     
     /// 从时间轮中移除指定任务
@@ -122,7 +124,7 @@ impl TaskScheduler {
         timestamp: NaiveDateTime,
         delay: Duration,
         key: K,
-    ) -> Result<String, String>
+    ) -> Result<String, SchedulerError>
     where
         K: ToString,
     {
@@ -133,7 +135,7 @@ impl TaskScheduler {
             key: key.to_string(),
             resp: resp_tx,
         };
-        self.sender.send(req).await.map_err(|_| "发送失败".to_string())?;
-        resp_rx.await.unwrap_or_else(|_| Err("接收失败".to_string()))
+        self.sender.send(req).await.map_err(|_| SchedulerError::SendError)?;
+        resp_rx.await.map_err(|_| SchedulerError::RecvError)?
     }
 }

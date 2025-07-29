@@ -36,8 +36,8 @@ impl CronTask {
             let _ = self.schedule(
                 Local::now().naive_local(), 
                 self.reload_interval, 
-                key.clone(),
-                String::new(),
+                key.clone(), 
+                eventdata,
             ).await;
             self.reload_tasks().await;
             return Ok(());

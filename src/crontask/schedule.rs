@@ -167,19 +167,19 @@ impl crate::crontask::core::CronTask {
     /// 将任务添加到时间轮中进行调度
     /// 
     /// # 参数
-    /// * `timestamp` - 任务触发时间
+    /// * `timestamp` - 任务触发时间（NaiveDateTime类型）
     /// * `millis` - 延迟毫秒数
     /// * `key` - 任务唯一标识符
-    /// * `arg` - 任务参数
+    /// * `arg` - 任务参数（字符串类型）
     /// 
     /// # 返回值
-    /// 成功时返回任务key，失败时返回错误信息
+    /// 成功时返回任务 key，失败时返回错误信息（Result<String, String> 类型）
     pub async fn schedule(
         self: &Arc<Self>,
         timestamp: NaiveDateTime, 
         millis: u64, 
         key: String,
-        arg: String,
+        arg: String, 
     ) -> Result<String, String> {
         println!("crontask::schedule 调度任务: {} at {} + {}ms", key, timestamp, millis);
         let self_clone = self.clone();
@@ -189,7 +189,7 @@ impl crate::crontask::core::CronTask {
             key,
             arg,
             move |key, eventdata| self_clone.on_call_back(key, eventdata),
-        ).await
+        ).await.map_err(|e| e.to_string())
     }
     
     /// 从时间轮中移除指定任务
@@ -212,6 +212,6 @@ impl crate::crontask::core::CronTask {
             timestamp,
             std::time::Duration::from_millis(millis),
             key,
-        ).await
+        ).await.map_err(|e| e.to_string())
     }
 }
