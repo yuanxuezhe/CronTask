@@ -20,7 +20,7 @@ impl CronTask {
                 Local::now().naive_local(), 
                 self.reload_interval, 
                 key.clone(), 
-                eventdata.clone()
+                eventdata
             ).await;
             self.reload_tasks().await;
             return;
@@ -44,60 +44,67 @@ impl CronTask {
                 return;
             }
         };
-        let (task, taskdetail) = {
+        let task = {
             let guard = self.inner.lock().await;
-            let task = match guard.tasks.get(&task_id) {
+            match guard.tasks.get(&task_id) {
                 Some(task) => task.clone(),
                 None => {
                     eprintln!("任务ID {} 不存在", task_id);
                     return;
                 }
-            };
-            let taskdetail = guard.taskdetails
-                .iter()
-                .find(|detail| gen_task_key(detail.taskid, &detail.timepoint) == key)
-                .cloned();
-            (task, taskdetail)
-        };
-        let mut taskdetail = match taskdetail {
-            Some(detail) => detail,
-            None => {
-                eprintln!("任务明细不存在: {}", key);
-                return;
             }
         };
+        
+        // 在锁外查找任务详情以减少锁竞争
+        let task_key = gen_task_key(task_id, &time_point.to_string());
+        let mut taskdetail = {
+            let guard = self.inner.lock().await;
+            let taskdetail = guard.taskdetails
+                .iter()
+                .find(|detail| gen_task_key(detail.taskid, &detail.timepoint) == task_key)
+                .cloned();
+            match taskdetail {
+                Some(detail) => detail,
+                None => {
+                    eprintln!("任务明细不存在: {}", task_key);
+                    return;
+                }
+            }
+        };
+        
         if taskdetail.current_trigger_count >= task.retry_count {
             println!("任务 {} 达到最大重试次数，停止调度", task.taskname);
             taskdetail.status = TASK_STATUS_UNMONITORED;
             let mut guard = self.inner.lock().await;
             if let Some(detail) = guard.taskdetails
                 .iter_mut()
-                .find(|d| gen_task_key(d.taskid, &d.timepoint) == key) {
+                .find(|d| gen_task_key(d.taskid, &d.timepoint) == task_key) {
                 *detail = taskdetail;
             }
             return;
         }
         taskdetail.current_trigger_count += 1;
+        let message = self.build_task_message(task.discribe, taskdetail.current_trigger_count);
         match self.schedule(
             time_point,
             (task.retry_interval * taskdetail.current_trigger_count).try_into().unwrap(),
-            key.clone(),
-            self.build_task_message(task.discribe.clone(), taskdetail.current_trigger_count),
+            task_key.clone(),
+            message,
         ).await {
             Ok(_) => {
                 taskdetail.status = TASK_STATUS_RETRY;
-                println!("任务重试调度成功: {}", key);
+                println!("任务重试调度成功: {}", task_key);
             },
             Err(e) => {
                 taskdetail.status = TASK_STATUS_UNMONITORED;
-                eprintln!("任务重试调度失败: {} - {}", key, e);
+                eprintln!("任务重试调度失败: {} - {}", task_key, e);
             },
         }
         let mut guard = self.inner.lock().await;
         if let Some(detail) = guard.taskdetails
             .iter_mut()
-            .find(|d| gen_task_key(d.taskid, &d.timepoint) == key) {
+            .find(|d| gen_task_key(d.taskid, &d.timepoint) == task_key) {
             *detail = taskdetail;
         }
     }
-} 
+}

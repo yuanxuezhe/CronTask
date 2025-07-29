@@ -77,11 +77,11 @@ impl crate::task::model::Task {
         }
     }
     fn check_weekly(&self, date: NaiveDate) -> bool {
-        let weekday = date.weekday() as u8 + 1;
+        let weekday = date.weekday().number_from_monday(); // 从周一为1开始计算
         self.period[1..]
             .chars()
             .filter_map(|c| c.to_digit(10))
-            .any(|d| d == weekday as u32)
+            .any(|d| d == weekday)
     }
     fn check_monthly(&self, date: NaiveDate) -> bool {
         let day = date.day();
@@ -94,4 +94,4 @@ impl crate::task::model::Task {
         let md = format!("{:02}{:02}", date.month(), date.day());
         self.period[1..] == md
     }
-} 
+}

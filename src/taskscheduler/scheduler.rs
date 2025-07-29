@@ -18,19 +18,7 @@ impl TaskScheduler {
         let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
         let tw_clone: Arc<TimeWheel> = Arc::clone(&time_wheel);
         tokio::spawn(async move {
-            let mut rx = receiver;
-            while let Some(request) = rx.recv().await {
-                match request {
-                    TaskRequest::Add { time, interval, key, arg, task, resp } => {
-                        let result = tw_clone.add_task(time, interval, key, arg, task).await;
-                        let _ = resp.send(result);
-                    }
-                    TaskRequest::Cancel { time, interval, key, resp } => {
-                        let result = tw_clone.del_task(time, interval, key).await;
-                        let _ = resp.send(result);
-                    }
-                }
-            }
+            Self::process_requests(receiver, tw_clone).await;
         });
         let tw_driver: Arc<TimeWheel> = Arc::clone(&time_wheel);
         tokio::spawn(async move {
@@ -42,6 +30,22 @@ impl TaskScheduler {
         });
         Self { sender }
     }
+    
+    async fn process_requests(mut receiver: mpsc::Receiver<TaskRequest>, time_wheel: Arc<TimeWheel>) {
+        while let Some(request) = receiver.recv().await {
+            match request {
+                TaskRequest::Add { time, interval, key, arg, task, resp } => {
+                    let result = time_wheel.add_task(time, interval, key, arg, task).await;
+                    let _ = resp.send(result);
+                }
+                TaskRequest::Cancel { time, interval, key, resp } => {
+                    let result = time_wheel.del_task(time, interval, key).await;
+                    let _ = resp.send(result);
+                }
+            }
+        }
+    }
+
     pub async fn schedule<F, K>(
         &self, 
         timestamp: NaiveDateTime, 
@@ -86,4 +90,4 @@ impl TaskScheduler {
         self.sender.send(req).await.map_err(|_| "发送失败".to_string())?;
         resp_rx.await.unwrap_or_else(|_| Err("接收失败".to_string()))
     }
-} 
+}

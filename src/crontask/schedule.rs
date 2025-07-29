@@ -58,15 +58,13 @@ impl crate::crontask::core::CronTask {
                 Err(e) => eprintln!("任务取消失败: {} - {}", task_key, e),
             }
         }
+        
+        // 先收集所有需要更新状态的任务信息
+        let mut status_updates = Vec::new();
         for (ndt, delay_ms, task_key, message, taskid, timepoint) in to_schedule {
             match self.schedule(ndt, delay_ms, task_key.clone(), message).await {
                 Ok(_) => {
-                    let mut guard = self.inner.lock().await;
-                    if let Some(detail) = guard.taskdetails
-                        .iter_mut()
-                        .find(|d| d.taskid == taskid && d.timepoint == timepoint) {
-                        detail.status = TASK_STATUS_MONITORING;
-                    }
+                    status_updates.push((taskid, timepoint, TASK_STATUS_MONITORING));
                     println!("任务调度成功: {}", task_key);
                 },
                 Err(e) => {
@@ -74,6 +72,20 @@ impl crate::crontask::core::CronTask {
                 },
             }
         }
+        
+        // 批量更新状态以减少锁竞争
+        if !status_updates.is_empty() {
+            let mut guard = self.inner.lock().await;
+            for (taskid, timepoint, new_status) in status_updates {
+                if let Some(detail) = guard.taskdetails
+                    .iter_mut()
+                    .find(|d| d.taskid == taskid && d.timepoint == timepoint) {
+                    detail.status = new_status;
+                }
+            }
+        }
+        
+        // 清理已删除的任务
         let mut guard = self.inner.lock().await;
         guard.taskdetails.retain(|detail| detail.tag != TASK_TAG_DELETE || detail.status != TASK_STATUS_UNMONITORED);
     }

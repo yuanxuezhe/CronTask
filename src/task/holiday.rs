@@ -23,4 +23,4 @@ pub fn is_holiday(date: NaiveDate) -> bool {
         .collect()
     });
     HOLIDAYS.contains(&date)
-} 
+}

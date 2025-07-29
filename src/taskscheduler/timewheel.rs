@@ -117,24 +117,15 @@ impl TimeWheel {
         self.current_slot.store(current_slot, Ordering::Release);
         loop {
             interval.tick().await;
+            self.process_current_slot().await;
             let current = self.current_slot.load(Ordering::Relaxed);
-            let slot = self.slots[current].load();
-            let mut tasks = slot.tasks.lock().await;
-            let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
-            drop(tasks);
-            for (key, task, arg) in task_clones {
-                let task = Arc::clone(&task);
-                let arg = arg.clone();
-                tokio::task::spawn_blocking(move || {
-                    task(key.clone(), arg);
-                });
-            }
             self.current_slot.store(
                 (current + 1) % self.total_slots,
                 Ordering::Release
             );
         }
     }
+    
     pub async fn run_highprecision(&self) {
         let mut next_tick = {
             let now = SystemTime::now();
@@ -154,22 +145,27 @@ impl TimeWheel {
                 spin_loop();
             }
             next_tick += self.tick_duration;
+            self.process_current_slot().await;
             let current = self.current_slot.load(Ordering::Relaxed);
-            let slot = self.slots[current].load();
-            let mut tasks = slot.tasks.lock().await;
-            let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
-            drop(tasks);
-            for (key, task, arg) in task_clones {
-                let task = Arc::clone(&task);
-                let arg = arg.clone();
-                tokio::task::spawn_blocking(move || {
-                    task(key.clone(), arg);
-                });
-            }
             self.current_slot.store(
                 (current + 1) % self.total_slots,
                 Ordering::Release
             );
+        }
+    }
+    
+    /// 处理当前槽位的任务
+    async fn process_current_slot(&self) {
+        let current = self.current_slot.load(Ordering::Relaxed);
+        let slot = self.slots[current].load();
+        let mut tasks = slot.tasks.lock().await;
+        let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
+        drop(tasks);
+        for (key, task, arg) in task_clones {
+            let task = Arc::clone(&task);
+            tokio::task::spawn_blocking(move || {
+                task(key, arg);
+            });
         }
     }
 } 
