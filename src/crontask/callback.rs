@@ -4,6 +4,7 @@ use chrono_tz::Asia::Shanghai;
 use crate::crontask::core::CronTask;
 use crate::consts::*;
 use crate::utils::gen_task_key;
+use crate::task::TaskDetail;
 
 impl CronTask {
     /// 回调函数包装器，在tokio任务中执行实际的回调逻辑
@@ -57,7 +58,7 @@ impl CronTask {
                 .ok_or_else(|| format!("任务ID {} 不存在", task_id))?
         };
         
-        // 在锁外查找任务详情以减少锁竞争
+        // 在锁外获取任务详情以减少锁竞争
         let task_key = gen_task_key(task_id, &time_point.to_string());
         let mut taskdetail = {
             let guard = self.inner.lock().await;
@@ -67,16 +68,11 @@ impl CronTask {
                 .cloned();
             taskdetail.ok_or_else(|| format!("任务明细不存在: {}", task_key))?
         };
-        
+
         if taskdetail.current_trigger_count >= task.retry_count {
             println!("任务 {} 达到最大重试次数，停止调度", task.taskname);
             taskdetail.status = TASK_STATUS_UNMONITORED;
-            let mut guard = self.inner.lock().await;
-            if let Some(detail) = guard.taskdetails
-                .iter_mut()
-                .find(|d| gen_task_key(d.taskid, &d.timepoint) == task_key) {
-                *detail = taskdetail;
-            }
+            self.update_task_detail(taskdetail).await?;
             return Ok(());
         }
         taskdetail.current_trigger_count += 1;
@@ -95,13 +91,31 @@ impl CronTask {
             },
             Err(e) => {
                 taskdetail.status = TASK_STATUS_UNMONITORED;
+                self.update_task_detail(taskdetail).await?;
                 return Err(format!("任务重试调度失败: {} - {}", task_key, e));
             },
         }
+        self.update_task_detail(taskdetail).await?;
+        Ok(())
+    }
+
+    /// 更新任务详情状态并持久化
+    async fn update_task_detail_status(&self, task_key: &str, status: i32) -> Result<(), String> {
         let mut guard = self.inner.lock().await;
         if let Some(detail) = guard.taskdetails
             .iter_mut()
             .find(|d| gen_task_key(d.taskid, &d.timepoint) == task_key) {
+            detail.status = status;
+        }
+        Ok(())
+    }
+
+    /// 持久化更新任务详情
+    async fn update_task_detail(&self, taskdetail: TaskDetail) -> Result<(), String> {
+        let mut guard = self.inner.lock().await;
+        if let Some(detail) = guard.taskdetails
+            .iter_mut()
+            .find(|d| gen_task_key(d.taskid, &d.timepoint) == gen_task_key(taskdetail.taskid, &taskdetail.timepoint)) {
             *detail = taskdetail;
         }
         Ok(())

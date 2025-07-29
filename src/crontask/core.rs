@@ -4,6 +4,8 @@ use crate::taskscheduler::TaskScheduler;
 use crate::crontask::state::InnerState;
 use dbcore::Database;
 use std::collections::HashMap;
+use crate::task::TaskDetail;
+use log::{info, error}; // 添加日志导入
 
 pub struct CronTask {
     /// 任务调度器
@@ -46,16 +48,49 @@ impl CronTask {
         let instance_clone = instance.clone();
         let reload_name = crate::consts::RELOAD_TASK_NAME.to_string();
         
+        // 使用更精确的调度间隔
+        let reload_interval = instance.reload_interval;
+        
         tokio::spawn(async move {
-            let _ = instance_clone.schedule(
-                chrono::Local::now().naive_local(), 
-                2000, 
-                reload_name.clone(),
-                reload_name.clone(),
-            ).await;
-            println!("CronTask initialized");
+            loop {
+                match instance_clone.schedule(
+                    chrono::Local::now().naive_local(), 
+                    reload_interval, 
+                    reload_name.clone(),
+                    reload_name.clone(),
+                ).await {
+                    Ok(_) => {
+                        info!("CronTask initialized successfully");
+                        break;
+                    },
+                    Err(e) => {
+                        error!("Failed to initialize CronTask: {}. Retrying in 5 seconds...", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
+                }
+            }
         });
         
         instance
+    }
+
+    /// 获取当前活跃的任务数量
+    pub async fn active_task_count(&self) -> usize {
+        let inner = self.inner.lock().await;
+        inner.tasks.len()
+    }
+
+    /// 获取任务详情
+    pub async fn get_task_details(&self) -> Vec<TaskDetail> {
+        let inner = self.inner.lock().await;
+        inner.taskdetails.clone()
+    }
+
+    /// 清除所有任务
+    pub async fn clear_all_tasks(&self) {
+        let mut inner = self.inner.lock().await;
+        inner.tasks.clear();
+        inner.taskdetails.clear();
+        info!("All tasks cleared");
     }
 }

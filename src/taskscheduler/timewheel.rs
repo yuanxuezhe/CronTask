@@ -10,6 +10,21 @@ use tokio::sync::Mutex;
 
 pub type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 
+// 定义时间轮错误类型
+#[derive(Debug, thiserror::Error)]
+pub enum TimeWheelError {
+    #[error("时间溢出")]
+    TimeOverflow,
+    #[error("任务时间超出范围")]
+    TaskTooFarInFuture,
+    #[error("任务已存在")]
+    TaskAlreadyExists,
+    #[error("任务已过期")]
+    TaskPastDue,
+    #[error("时间转换失败: {0}")]
+    TimeConversionFailed(String),
+}
+
 pub struct TimeWheelSlot {
     /// 存储任务的HashMap，键为任务key，值为任务函数和参数
     pub tasks: Mutex<HashMap<String, (Task, String)>>,
@@ -61,16 +76,14 @@ impl TimeWheel {
     /// 
     /// # 返回值
     /// 返回时间对应的绝对槽位索引
-    pub fn get_real_slot(&self, timestamp: NaiveDateTime) -> usize {
+    pub fn get_real_slot(&self, timestamp: NaiveDateTime) -> Result<usize, TimeWheelError> {
         let duration = timestamp - self.base_time;
-        let nanos = duration
-            .num_nanoseconds()
-            .unwrap_or_else(|| {
-                log::warn!("时间计算溢出，使用默认值");
-                0
-            }) as u64;
+        let nanos = match duration.num_nanoseconds() {
+            Some(nanos) if nanos >= 0 => nanos as u64,
+            _ => return Err(TimeWheelError::TaskPastDue),
+        };
         let tick_index = nanos / self.tick_duration.as_nanos() as u64;
-        tick_index as usize
+        Ok(tick_index as usize)
     }
     
     /// 获取时间对应的槽位（取模后的结果）
@@ -80,8 +93,8 @@ impl TimeWheel {
     /// 
     /// # 返回值
     /// 返回时间对应的槽位索引
-    pub fn get_slot(&self, timestamp: NaiveDateTime) -> usize {
-        self.get_real_slot(timestamp) % self.total_slots
+    pub fn get_slot(&self, timestamp: NaiveDateTime) -> Result<usize, TimeWheelError> {
+        Ok(self.get_real_slot(timestamp)? % self.total_slots)
     }
     
     /// 添加任务到时间轮
@@ -94,29 +107,35 @@ impl TimeWheel {
     /// * `task` - 任务执行函数
     /// 
     /// # 返回值
-    /// 成功时返回任务key，失败时返回错误信息
-    pub async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, String> {
+    /// 返回操作结果
+    pub async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, TimeWheelError> {
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
-        let current_slot = self.get_real_slot(now);
+        
+        // 计算目标时间
         let delta = TimeDelta::from_std(delay)
-            .map_err(|e| format!("时间转换失败: {}", e))?;
+            .map_err(|e| TimeWheelError::TimeConversionFailed(format!("时间转换失败: {}", e)))?;
         let target_time = timestamp.checked_add_signed(delta)
-            .ok_or("时间计算溢出（超出范围）")?;
-        let target_slot = self.get_real_slot(target_time);
+            .ok_or(TimeWheelError::TimeOverflow)?;
+        let current_slot = self.get_real_slot(now)?;
+        let target_slot = self.get_real_slot(target_time)?;
         if target_time < now {
-            return Err("任务时间已过时".to_string());
+            return Err(TimeWheelError::TaskPastDue);
         }
         if target_slot <= current_slot {
-            return Err("任务时间已过时".to_string());
+            return Err(TimeWheelError::TaskPastDue);
         }
         if target_slot - current_slot >= self.total_slots {
-            return Err("任务时间超出时间轮最大范围，延迟添加到监控".to_string());
+            return Err(TimeWheelError::TaskTooFarInFuture);
         }
+        
+        // 添加任务
         let slot = self.slots[target_slot % self.total_slots].load();
         let mut tasks = slot.tasks.lock().await;
+        
         if tasks.contains_key(&key) {
-            return Err("任务已存在".to_string());
+            return Err(TimeWheelError::TaskAlreadyExists);
         }
+        
         tasks.insert(key.clone(), (task, arg));
         Ok(key)
     }
@@ -129,31 +148,33 @@ impl TimeWheel {
     /// * `key` - 任务唯一标识符
     /// 
     /// # 返回值
-    /// 返回操作结果信息
-    pub async fn del_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String) -> Result<String, String> {
+    /// 返回操作结果
+    pub async fn del_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String) -> Result<String, TimeWheelError> {
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
-        let current_slot = self.get_real_slot(now);
+        
+        // 计算目标时间
         let delta = TimeDelta::from_std(delay)
-            .map_err(|e| format!("时间转换失败: {}", e))?;
+            .map_err(|e| TimeWheelError::TimeConversionFailed(e.to_string()))?;
         let target_time = timestamp.checked_add_signed(delta)
-            .ok_or("时间计算溢出（超出范围）");
-        let target_slot = match target_time {
-            Ok(t) => self.get_real_slot(t),
-            Err(_) => return Ok("任务时间已过时,无需取消".to_string()),
-        };
-        if let Ok(t) = target_time {
-            if t < now {
-                return Ok("任务时间已过时,无需取消".to_string());
-            }
-            if target_slot <= current_slot {
-                return Ok("任务时间已过时,无需取消".to_string());
-            }
-            if target_slot - current_slot >= self.total_slots {
-                return Ok("任务时间超出时间轮最大范围,无需取消".to_string());
-            }
+            .ok_or(TimeWheelError::TimeOverflow)?;
+        
+        // 如果任务时间已过时
+        if target_time < now {
+            return Ok("任务时间已过时,无需取消".to_string());
         }
+        
+        // 获取槽位
+        let current_slot = self.get_real_slot(now)?;
+        let target_slot = self.get_real_slot(target_time)?;
+        
+        if target_slot <= current_slot || target_slot - current_slot >= self.total_slots {
+            return Ok("任务时间已过时或超出范围,无需取消".to_string());
+        }
+        
+        // 删除任务
         let slot = self.slots[target_slot % self.total_slots].load();
         let mut tasks = slot.tasks.lock().await;
+        
         match tasks.remove(&key) {
             Some(_) => Ok("任务已取消".to_string()),
             None => Ok("任务不存在,无需取消".to_string()),
@@ -179,7 +200,7 @@ impl TimeWheel {
         }
         
         let mut interval = tokio::time::interval(self.tick_duration);
-        let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local());
+        let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local()).unwrap_or(0);
         self.current_slot.store(current_slot, Ordering::Release);
         loop {
             interval.tick().await;
@@ -211,7 +232,7 @@ impl TimeWheel {
             let offset = now_inst - Instant::now();
             now_inst + Duration::from_nanos(diff_ns as u64) + offset
         };
-        let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local());
+        let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local()).unwrap_or(0);
         self.current_slot.store(current_slot, Ordering::Release);
         loop {
             while Instant::now() < next_tick {
@@ -231,12 +252,20 @@ impl TimeWheel {
     async fn process_current_slot(&self) {
         let current = self.current_slot.load(Ordering::Relaxed);
         let slot = self.slots[current].load();
-        let mut tasks = slot.tasks.lock().await;
-        let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
-        drop(tasks);
+        
+        // 获取并释放任务锁
+        let task_clones = {
+            let mut tasks = slot.tasks.lock().await;
+            let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
+            drop(tasks);
+            task_clones
+        };
+        
+        // 并行执行任务
         for (key, task, arg) in task_clones {
             let task = Arc::clone(&task);
-            tokio::task::spawn_blocking(move || {
+            // 使用spawn而不是spawn_blocking，除非任务确实需要阻塞
+            tokio::task::spawn(async move {
                 task(key, arg);
             });
         }

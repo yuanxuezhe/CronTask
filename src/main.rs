@@ -36,10 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 打印缓存中的任务列表
     let tasks = cron_task.get_all_tasks_from_cache().await;
     log::info!("缓存中的任务列表: {:?}", tasks);
+
     // 等待 Ctrl+C 信号
     signal::ctrl_c().await.expect("监听信号失败");
     log::info!("收到 Ctrl+C，停止所有任务...");
-    
+
     Ok(())
 }
 
