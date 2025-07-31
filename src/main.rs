@@ -6,28 +6,40 @@ mod comm;
 use tokio::signal;
 use dbcore::Database;
 use std::fs;
+use std::path::Path;
 use task::model::Task;
 use crate::crontask::core::CronTask;
+use log::LevelFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 初始化日志
-    env_logger::init();
+    // 初始化日志，设置日志级别为 Info
+    env_logger::builder()
+        .filter_level(LevelFilter::Info)
+        .init();
     
     let db_path = "evdata.db";
+    
+    // 记录数据库文件路径
+    log::info!("数据库文件路径: {}", db_path);
         
-    // 确保数据库文件存在
-    if !std::path::Path::new(db_path).exists() {
+    // 如果数据库文件不存在则创建它
+    if !Path::new(db_path).exists() {
+        log::info!("创建新数据库文件");
         fs::File::create(db_path)?;
     }
 
+    // 连接数据库
+    log::info!("连接数据库");
     let db = Database::new(db_path).await?;
 
     // 初始化表结构
+    log::info!("初始化表结构");
     Task::init(&db).await?;
 
     // 创建任务管理器
     // 参数说明：重载间隔10秒，tick间隔1秒，总槽位86400，非高精度模式
+    log::info!("初始化任务管理器");
     let cron_task = CronTask::new(10000, 1000, 86400, false, db);
 
     log::info!("时间轮运行中...");
@@ -37,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("缓存中的任务列表: {:?}", tasks);
 
     // 等待 Ctrl+C 信号
+    log::info!("等待终止信号");
     signal::ctrl_c().await.expect("监听信号失败");
     log::info!("收到 Ctrl+C，停止所有任务...");
 

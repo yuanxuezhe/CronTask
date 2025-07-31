@@ -2,22 +2,22 @@ use std::sync::Arc;
 use chrono::{Utc, Local, NaiveDateTime};
 use chrono_tz::Asia::Shanghai;
 use crate::crontask::core::CronTask;
+use crate::crontask::message_bus::CronMessage;
 use crate::comm::consts::*;
 use crate::comm::utils::gen_task_key;
 use crate::task::TaskDetail;
 
 impl CronTask {
-    /// 回调函数包装器，在tokio任务中执行实际的回调逻辑
+    /// 回调函数包装器，通过消息总线发送任务执行消息
     /// 
     /// # 参数
     /// * `key` - 任务唯一标识符
     /// * `eventdata` - 任务相关的数据
     pub fn on_call_back(self: &Arc<Self>, key: String, eventdata: String) {
-        let this = Arc::clone(self);
+        // 通过消息总线发送执行任务消息，避免直接调用
+        let message_bus = self.message_bus.clone();
         tokio::spawn(async move {
-            if let Err(e) = this.on_call_back_inner(key, eventdata).await {
-                eprintln!("任务回调执行失败: {}", e);
-            }
+            let _ = message_bus.send(CronMessage::ExecuteTask { key, eventdata });
         });
     }
 
@@ -30,17 +30,18 @@ impl CronTask {
     /// 
     /// # 返回值
     /// 返回Result<(), String>表示执行结果
-    async fn on_call_back_inner(self: &Arc<Self>, key: String, eventdata: String) -> Result<(), String> {
+    pub async fn on_call_back_inner(&self, key: String, eventdata: String) -> Result<(), String> {
         let now = Utc::now().with_timezone(&Shanghai);
         println!("[{}] 执行任务[{}]: {}", now, key, eventdata);
         if key == RELOAD_TASK_NAME {
-            let _ = self.schedule(
-                Local::now().naive_local(), 
-                self.reload_interval, 
-                key.clone(), 
-                eventdata,
-            ).await;
-            self.reload_tasks().await;
+            let _ = self.message_bus.send(CronMessage::ScheduleTask {
+                timestamp: Local::now().naive_local(), 
+                delay_ms: self.reload_interval, 
+                key: key.clone(), 
+                arg: eventdata,
+            });
+            // 通过消息总线发送重新加载任务消息
+            let _ = self.message_bus.send(CronMessage::ReloadTasks);
             return Ok(());
         }
         let parts: Vec<&str> = key.split(TASK_KEY_SEPARATOR).collect();
@@ -79,12 +80,12 @@ impl CronTask {
         let message = self.build_task_message(task.discribe, taskdetail.current_trigger_count);
         let delay_ms = (task.retry_interval * taskdetail.current_trigger_count) as u64;
         
-        match self.schedule(
-            time_point,
+        match self.message_bus.send(CronMessage::ScheduleTask {
+            timestamp: time_point,
             delay_ms,
-            task_key.clone(),
-            message,
-        ).await {
+            key: task_key.clone(),
+            arg: message,
+        }) {
             Ok(_) => {
                 taskdetail.status = TASK_STATUS_RETRY;
                 println!("任务重试调度成功: {}", task_key);

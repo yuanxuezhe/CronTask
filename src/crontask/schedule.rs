@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use chrono::NaiveDateTime;
 use crate::crontask::state::InnerState;
+use crate::crontask::message_bus::CronMessage;
 use crate::comm::consts::*;
 use crate::comm::utils::gen_task_key;
 use std::collections::HashSet;
@@ -51,22 +52,29 @@ impl crate::crontask::core::CronTask {
             }
         }
         for (ndt, delay_ms, task_key) in to_cancel {
-            match self.cancel(ndt, delay_ms, task_key.clone()).await {
-                Ok(_) => println!("任务取消成功: {}", task_key),
-                Err(e) => eprintln!("任务取消失败: {} - {}", task_key, e),
-            }
+            let _ = self.message_bus.send(CronMessage::CancelTask {
+                timestamp: ndt,
+                delay_ms,
+                key: task_key.clone(),
+            });
+            println!("发送任务取消消息: {}", task_key);
         }
         
         // 先收集所有需要更新状态的任务信息
         let mut status_updates = Vec::new();
         for (ndt, delay_ms, task_key, message, taskid, timepoint) in to_schedule {
-            match self.schedule(ndt, delay_ms, task_key.clone(), message).await {
+            match self.message_bus.send(CronMessage::ScheduleTask {
+                timestamp: ndt,
+                delay_ms,
+                key: task_key.clone(),
+                arg: message,
+            }) {
                 Ok(_) => {
                     status_updates.push((taskid, timepoint, TASK_STATUS_MONITORING));
-                    println!("任务调度成功: {}", task_key);
+                    println!("发送任务调度消息: {}", task_key);
                 },
                 Err(e) => {
-                    eprintln!("任务调度失败: {} - {}", task_key, e);
+                    eprintln!("发送任务调度消息失败: {} - {}", task_key, e);
                 },
             }
         }
@@ -180,21 +188,14 @@ impl crate::crontask::core::CronTask {
         millis: u64, 
         key: String,
         arg: String, 
-    ) -> Result<String, String> {
-        println!("crontask::schedule 调度任务: {} at {} + {}ms", key, timestamp, millis);
-        let self_clone = self.clone();
-        let result = self.taskscheduler.schedule(
+    ) -> Result<(), String> {
+        println!("crontask::schedule 发送调度消息: {} at {} + {}ms", key, timestamp, millis);
+        self.message_bus.send(CronMessage::ScheduleTask {
             timestamp,
-            std::time::Duration::from_millis(millis),
+            delay_ms: millis,
             key,
             arg,
-            move |key, eventdata| self_clone.on_call_back(key, eventdata),
-        ).await;
-        
-        match result {
-            Ok(key) => Ok(key),
-            Err(e) => Err(e.to_string()),
-        }
+        }).map_err(|e| e.to_string())
     }
     
     /// 从时间轮中移除指定任务
@@ -211,17 +212,12 @@ impl crate::crontask::core::CronTask {
         timestamp: NaiveDateTime, 
         millis: u64, 
         key: String,
-    ) -> Result<String, String> {
-        println!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp, millis);
-        let result = self.taskscheduler.cancel(
+    ) -> Result<(), String> {
+        println!("crontask::cancel 发送取消消息: {} at {} + {}ms", key, timestamp, millis);
+        self.message_bus.send(CronMessage::CancelTask {
             timestamp,
-            std::time::Duration::from_millis(millis),
+            delay_ms: millis,
             key,
-        ).await;
-        
-        match result {
-            Ok(result) => Ok(result),
-            Err(e) => Err(e.to_string()),
-        }
+        }).map_err(|e| e.to_string())
     }
 }
