@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use chrono::NaiveDateTime;
-use crate::crontask::state::InnerState;
-use crate::crontask::message_bus::CronMessage;
+use crate::bus::message_bus::CronMessage;
 use crate::comm::consts::*;
 use crate::comm::utils::gen_task_key;
 use std::collections::HashSet;
@@ -14,7 +13,7 @@ impl crate::crontask::core::CronTask {
         let mut to_schedule = Vec::new();
         {
             let mut guard = self.inner.lock().await;
-            let InnerState { taskdetails, tasks } = &mut *guard;
+            let crate::crontask::state::InnerState { taskdetails, tasks } = &mut *guard;
             for taskdetail in taskdetails.iter_mut() {
                 let task = match tasks.get(&taskdetail.taskid) {
                     Some(task) => task,

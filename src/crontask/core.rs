@@ -2,14 +2,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::taskscheduler::TaskScheduler;
 use crate::crontask::state::InnerState;
-use crate::crontask::message_bus::{MessageBus, CronMessage};
-use crate::crontask::time_bus::{TimeBus, TimeEvent};
+use crate::bus::{message_bus::MessageBus, time_bus::TimeBus};
+use crate::bus::message_bus::CronMessage;
 use dbcore::Database;
 use std::collections::HashMap;
 use crate::task::TaskDetail;
 use crate::comm::consts::RELOAD_TASK_NAME;
 use log::info;
-use chrono::Timelike;
 
 pub struct CronTask {
     /// 任务调度器
@@ -60,6 +59,14 @@ impl CronTask {
             time_bus: time_bus.clone(),
         });
 
+        // 启动时间轮
+        let time_wheel = instance.taskscheduler.time_wheel();
+        tokio::spawn(async move {
+            time_wheel.run(|_timestamp| async move {
+                // 时间轮滴答回调，可以在这里添加日志或其他处理
+            }).await;
+        });
+
         // 启动消息处理器
         let instance_message_handler = instance.clone();
         tokio::spawn(async move {
@@ -72,17 +79,10 @@ impl CronTask {
             instance_time_handler.handle_time_events().await;
         });
         
-        // 启动时间生成器
-        let time_bus_clone = time_bus.clone();
-        tokio::spawn(async move {
-            Self::run_time_generator(time_bus_clone).await;
-        });
-        
         // 发送初始重新加载任务消息
-        let message_bus_clone = message_bus.clone();
         let reload_name = RELOAD_TASK_NAME.to_string();
         tokio::task::spawn(async move {
-            let _ = message_bus_clone.send(CronMessage::ScheduleTask {
+            let _ = message_bus.send(CronMessage::ScheduleTask {
                 timestamp: chrono::Local::now().naive_local(),
                 delay_ms: reload_millis,
                 key: reload_name,
@@ -91,43 +91,6 @@ impl CronTask {
         });
 
         instance
-    }
-    
-    /// 运行时间生成器，定期生成时间事件
-    async fn run_time_generator(time_bus: Arc<TimeBus>) {
-        let mut second_interval = tokio::time::interval(std::time::Duration::from_secs(1));
-        
-        // 记录上一次触发的时间，避免重复触发
-        let mut last_minute = None;
-        let mut last_hour = None;
-        let mut last_day = None;
-        
-        loop {
-            second_interval.tick().await;
-            
-            let now = TimeBus::now();
-            
-            // 总是发送秒事件
-            let _ = time_bus.send(TimeEvent::Second(now));
-            
-            // 检查是否需要触发分钟事件
-            if last_minute != Some(now.minute()) {
-                last_minute = Some(now.minute());
-                let _ = time_bus.send(TimeEvent::Minute(now));
-            }
-            
-            // 检查是否需要触发小时事件
-            if last_hour != Some(now.hour()) {
-                last_hour = Some(now.hour());
-                let _ = time_bus.send(TimeEvent::Hour(now));
-            }
-            
-            // 检查是否需要触发天事件
-            if last_day != Some(now.date_naive()) {
-                last_day = Some(now.date_naive());
-                let _ = time_bus.send(TimeEvent::Day(now));
-            }
-        }
     }
     
     /// 处理消息总线中的消息
@@ -146,7 +109,7 @@ impl CronTask {
                     self.reload_tasks().await;
                 },
                 CronMessage::ExecuteTask { key, eventdata } => {
-                    self.on_call_back_inner(key, eventdata).await;
+                    let _ = self.on_call_back_inner(key, eventdata).await;
                 },
             }
         }
@@ -156,24 +119,28 @@ impl CronTask {
     async fn handle_time_events(self: &Arc<Self>) {
         let mut receiver = self.time_bus.subscribe();
         
-        while let Ok(event) = receiver.recv().await {
-            match event {
-                TimeEvent::Second(_) => {
+        while let Ok(pulse) = receiver.recv().await {
+            // 处理不同类型的脉冲信号
+            match pulse.signal_type {
+                // 秒脉冲 (0b000010 = 2)
+                2 => {
                     // 每秒可以处理的逻辑
                 },
-                TimeEvent::Minute(_) => {
-                    // 每分钟重新调度任务
-                    self.reschedule_all().await;
-                },
-                TimeEvent::Hour(_) => {
+                // 小时脉冲 (0b001000 = 8)
+                8 => {
                     // 每小时可以处理的逻辑
                 },
-                TimeEvent::Day(_) => {
+                // 天脉冲 (0b010000 = 16)
+                16 => {
                     // 每天可以处理的逻辑
                 },
-                TimeEvent::Custom(_, _) => {
-                    // 自定义时间事件
+                // 周脉冲 (0b100000 = 32)
+                32 => {
+                    // 每周可以处理的逻辑
                 },
+                _ => {
+                    // 未知信号类型
+                }
             }
         }
     }

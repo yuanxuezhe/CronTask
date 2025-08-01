@@ -2,6 +2,7 @@ mod taskscheduler;
 mod crontask;
 mod task;
 mod comm;
+mod bus;
 
 use tokio::signal;
 use dbcore::Database;

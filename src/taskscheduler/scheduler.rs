@@ -12,6 +12,8 @@ const CHANNEL_BUFFER_SIZE: usize = 1000;
 pub struct TaskScheduler {
     /// 任务请求发送通道
     pub sender: mpsc::Sender<TaskRequest>,
+    /// 时间轮实例
+    time_wheel: Arc<TimeWheel>,
 }
 
 impl TaskScheduler {
@@ -20,26 +22,25 @@ impl TaskScheduler {
     /// # 参数
     /// * `tick_duration` - 时间轮滴答间隔
     /// * `total_slots` - 时间轮总槽数
-    /// * `high_precision` - 是否使用高精度模式
+    /// * `_high_precision` - 是否使用高精度模式（已废弃，仅为了向后兼容保留参数）
     /// 
     /// # 返回值
     /// 返回新的任务调度器实例
-    pub fn new(tick_duration: Duration, total_slots: usize, high_precision: bool) -> Self {
+    pub fn new(tick_duration: Duration, total_slots: usize, _high_precision: bool) -> Self {
         let (sender, receiver) = mpsc::channel::<TaskRequest>(CHANNEL_BUFFER_SIZE);
         let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
         let tw_clone: Arc<TimeWheel> = Arc::clone(&time_wheel);
         tokio::spawn(async move {
             Self::process_requests(receiver, tw_clone).await;
         });
-        let tw_driver: Arc<TimeWheel> = Arc::clone(&time_wheel);
-        tokio::spawn(async move {
-            if high_precision {
-                tw_driver.run_highprecision().await;
-            } else {
-                tw_driver.run().await;
-            }
-        });
-        Self { sender }
+        
+        // 不再在这里启动时间轮，而是通过时间总线回调方式驱动
+        // 时间轮会在CronTask中通过时间总线的回调来驱动
+
+        Self { 
+            sender,
+            time_wheel,
+        }
     }
     
     /// 处理来自通道的任务添加和取消请求
@@ -126,5 +127,10 @@ impl TaskScheduler {
         };
         self.sender.send(req).await.map_err(|_| TaskSchedulerError::SendError)?;
         resp_rx.await.map_err(|_| TaskSchedulerError::RecvError)?
+    }
+    
+    /// 获取时间轮实例，用于外部驱动
+    pub fn time_wheel(&self) -> Arc<TimeWheel> {
+        self.time_wheel.clone()
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use chrono::{Utc, Local, NaiveDateTime};
 use chrono_tz::Asia::Shanghai;
 use crate::crontask::core::CronTask;
-use crate::crontask::message_bus::CronMessage;
+use crate::bus::message_bus::CronMessage;
 use crate::comm::consts::*;
 use crate::comm::utils::gen_task_key;
 use crate::task::TaskDetail;

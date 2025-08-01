@@ -168,7 +168,11 @@ impl TimeWheel {
     }
     
     /// 使用tokio::time::interval驱动时间轮运行
-    pub async fn run(&self) {
+    pub async fn run<F, Fut>(self: Arc<Self>, on_tick: F) 
+    where 
+        F: Fn(NaiveDateTime) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
         let now = SystemTime::now();
         let since_epoch = now.duration_since(UNIX_EPOCH);
         if let Err(e) = since_epoch {
@@ -190,7 +194,7 @@ impl TimeWheel {
         self.current_slot.store(current_slot, Ordering::Release);
         loop {
             interval.tick().await;
-            self.process_current_slot().await;
+            self.process_current_slot_with_callback(&on_tick).await;
             let current = self.current_slot.load(Ordering::Relaxed);
             self.current_slot.store(
                 (current + 1) % self.total_slots,
@@ -199,45 +203,23 @@ impl TimeWheel {
         }
     }
     
-    /// 使用自旋锁驱动时间轮运行，提供更高精度的时间控制
-    pub async fn run_highprecision(&self) {
-        let now = SystemTime::now();
-        let dur = now.duration_since(UNIX_EPOCH);
-        if let Err(e) = dur {
-            log::error!("获取系统时间失败: {}", e);
-            return;
-        }
-        let dur = dur.unwrap();
-        
-        let mut next_tick = {
-            let now_ns = dur.as_nanos();
-            let tick_ns = self.tick_duration.as_nanos();
-            let next_tick_ns = ((now_ns / tick_ns) + 1) * tick_ns;
-            let diff_ns = next_tick_ns - now_ns;
-            let now_inst = Instant::now();
-            let offset = now_inst - Instant::now();
-            now_inst + Duration::from_nanos(diff_ns as u64) + offset
-        };
-        let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local()).unwrap_or(0);
-        self.current_slot.store(current_slot, Ordering::Release);
-        loop {
-            while Instant::now() < next_tick {
-                spin_loop();
-            }
-            next_tick += self.tick_duration;
-            self.process_current_slot().await;
-            let current = self.current_slot.load(Ordering::Relaxed);
-            self.current_slot.store(
-                (current + 1) % self.total_slots,
-                Ordering::Release
-            );
-        }
-    }
-    
-    /// 执行当前槽位中的所有任务
-    async fn process_current_slot(&self) {
+    /// 执行当前槽位中的所有任务并调用回调函数
+    pub async fn process_current_slot_with_callback<F, Fut>(&self, on_tick: &F) 
+    where 
+        F: Fn(NaiveDateTime) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
         let current = self.current_slot.load(Ordering::Relaxed);
         let slot = self.slots[current].load();
+        
+        // 计算当前时间
+        let elapsed_ticks = current;
+        let elapsed_nanos = (elapsed_ticks as u128) * self.tick_duration.as_nanos();
+        let current_time = self.base_time + 
+            TimeDelta::nanoseconds(elapsed_nanos as i64);
+
+        // 触发滴答事件回调
+        on_tick(current_time).await;
         
         // 获取并释放任务锁
         let task_clones = {
