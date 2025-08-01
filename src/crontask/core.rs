@@ -61,9 +61,15 @@ impl CronTask {
 
         // 启动时间轮
         let time_wheel = instance.taskscheduler.time_wheel();
+        let time_bus_for_wheel = time_bus.clone();
         tokio::spawn(async move {
-            time_wheel.run(|_timestamp| async move {
-                // 时间轮滴答回调，可以在这里添加日志或其他处理
+            time_bus_for_wheel.register_callback(0b000010, move |_pulse| {
+                let time_wheel_clone = time_wheel.clone();
+                tokio::spawn(async move {
+                    time_wheel_clone.run(|_timestamp| async move {
+                        // 时间轮滴答回调，可以在这里添加日志或其他处理
+                    }).await;
+                });
             }).await;
         });
 
@@ -71,12 +77,6 @@ impl CronTask {
         let instance_message_handler = instance.clone();
         tokio::spawn(async move {
             instance_message_handler.handle_messages().await;
-        });
-        
-        // 启动时间事件处理器
-        let instance_time_handler = instance.clone();
-        tokio::spawn(async move {
-            instance_time_handler.handle_time_events().await;
         });
         
         // 发送初始重新加载任务消息
@@ -111,36 +111,6 @@ impl CronTask {
                 CronMessage::ExecuteTask { key, eventdata } => {
                     let _ = self.on_call_back_inner(key, eventdata).await;
                 },
-            }
-        }
-    }
-    
-    /// 处理时间事件
-    async fn handle_time_events(self: &Arc<Self>) {
-        let mut receiver = self.time_bus.subscribe();
-        
-        while let Ok(pulse) = receiver.recv().await {
-            // 处理不同类型的脉冲信号
-            match pulse.signal_type {
-                // 秒脉冲 (0b000010 = 2)
-                2 => {
-                    // 每秒可以处理的逻辑
-                },
-                // 小时脉冲 (0b001000 = 8)
-                8 => {
-                    // 每小时可以处理的逻辑
-                },
-                // 天脉冲 (0b010000 = 16)
-                16 => {
-                    // 每天可以处理的逻辑
-                },
-                // 周脉冲 (0b100000 = 32)
-                32 => {
-                    // 每周可以处理的逻辑
-                },
-                _ => {
-                    // 未知信号类型
-                }
             }
         }
     }

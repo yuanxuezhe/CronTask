@@ -167,42 +167,23 @@ impl TimeWheel {
         }
     }
     
-    /// 使用tokio::time::interval驱动时间轮运行
+    /// 使用时间总线的秒信号驱动时间轮运行
     pub async fn run<F, Fut>(self: Arc<Self>, on_tick: F) 
     where 
         F: Fn(NaiveDateTime) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ()> + Send,
     {
-        let now = SystemTime::now();
-        let since_epoch = now.duration_since(UNIX_EPOCH);
-        if let Err(e) = since_epoch {
-            log::error!("获取系统时间失败: {}", e);
-            return;
-        }
-        let since_epoch = since_epoch.unwrap();
-        let now_ns = since_epoch.as_nanos();
-        let tick_ns = self.tick_duration.as_nanos();
-        let next_tick_ns = ((now_ns / tick_ns) + 1) * tick_ns;
-        let remaining_ns = next_tick_ns - now_ns;
+        // 执行一次任务处理
+        self.process_current_slot_with_callback(&on_tick).await;
         
-        if let Ok(remaining) = remaining_ns.try_into() {
-            spin_sleep::sleep(Duration::from_nanos(remaining));
-        }
-        
-        let mut interval = tokio::time::interval(self.tick_duration);
-        let current_slot = self.get_slot(Utc::now().with_timezone(&Shanghai).naive_local()).unwrap_or(0);
-        self.current_slot.store(current_slot, Ordering::Release);
-        loop {
-            interval.tick().await;
-            self.process_current_slot_with_callback(&on_tick).await;
-            let current = self.current_slot.load(Ordering::Relaxed);
-            self.current_slot.store(
-                (current + 1) % self.total_slots,
-                Ordering::Release
-            );
-        }
+        // 更新当前槽位
+        let current = self.current_slot.load(Ordering::Relaxed);
+        self.current_slot.store(
+            (current + 1) % self.total_slots,
+            Ordering::Release
+        );
     }
-    
+
     /// 执行当前槽位中的所有任务并调用回调函数
     pub async fn process_current_slot_with_callback<F, Fut>(&self, on_tick: &F) 
     where 
