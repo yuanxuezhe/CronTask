@@ -6,6 +6,9 @@ use crate::comm::utils::gen_task_key;
 use std::collections::HashSet;
 use crate::task::TaskDetail;
 
+// 导入日志宏
+use crate::{info_log, error_log};
+
 impl crate::crontask::core::CronTask {
     /// 检查所有任务的状态并根据需要进行调度或取消调度
     pub async fn reschedule_all(self: &Arc<Self>) {
@@ -18,14 +21,14 @@ impl crate::crontask::core::CronTask {
                 let task = match tasks.get(&taskdetail.taskid) {
                     Some(task) => task,
                     None => {
-                        eprintln!("任务ID {} 不存在", taskdetail.taskid);
+                        error_log!("任务ID {} 不存在", taskdetail.taskid);
                         continue;
                     }
                 };
                 let ndt = match NaiveDateTime::parse_from_str(&taskdetail.timepoint, DATETIME_FORMAT) {
                     Ok(dt) => dt,
                     Err(e) => {
-                        eprintln!("时间点解析失败: {} - {}", taskdetail.timepoint, e);
+                        error_log!("时间点解析失败: {} - {}", taskdetail.timepoint, e);
                         continue;
                     }
                 };
@@ -56,7 +59,7 @@ impl crate::crontask::core::CronTask {
                 delay_ms,
                 key: task_key.clone(),
             });
-            println!("发送任务取消消息: {}", task_key);
+            info_log!("发送任务取消消息: {}", task_key);
         }
         
         // 先收集所有需要更新状态的任务信息
@@ -70,10 +73,10 @@ impl crate::crontask::core::CronTask {
             }) {
                 Ok(_) => {
                     status_updates.push((taskid, timepoint, TASK_STATUS_MONITORING));
-                    println!("发送任务调度消息: {}", task_key);
+                    info_log!("发送任务调度消息: {}", task_key);
                 },
                 Err(e) => {
-                    eprintln!("发送任务调度消息失败: {} - {}", task_key, e);
+                    error_log!("发送任务调度消息失败: {} - {}", task_key, e);
                 },
             }
         }
@@ -101,7 +104,7 @@ impl crate::crontask::core::CronTask {
         let new_tasks = match self.load_tasks_from_db().await {
             Ok(tasks) => tasks,
             Err(e) => {
-                eprintln!("Failed to load tasks from DB: {}", e);
+                error_log!("Failed to load tasks from DB: {}", e);
                 return;
             }
         };
@@ -188,7 +191,7 @@ impl crate::crontask::core::CronTask {
         key: String,
         arg: String, 
     ) -> Result<(), String> {
-        println!("crontask::schedule 发送调度消息: {} at {} + {}ms", key, timestamp, millis);
+        info_log!("crontask::schedule 发送调度消息: {} at {} + {}ms", key, timestamp, millis);
         self.message_bus.send(CronMessage::ScheduleTask {
             timestamp,
             delay_ms: millis,
@@ -212,7 +215,7 @@ impl crate::crontask::core::CronTask {
         millis: u64, 
         key: String,
     ) -> Result<(), String> {
-        println!("crontask::cancel 发送取消消息: {} at {} + {}ms", key, timestamp, millis);
+        info_log!("crontask::cancel 发送取消消息: {} at {} + {}ms", key, timestamp, millis);
         self.message_bus.send(CronMessage::CancelTask {
             timestamp,
             delay_ms: millis,

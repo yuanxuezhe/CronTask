@@ -34,6 +34,13 @@ pub enum CronMessage {
         /// 任务相关数据
         eventdata: String,
     },
+    /// 日志消息
+    Log {
+        /// 日志级别
+        level: log::Level,
+        /// 日志内容
+        message: String,
+    }
 }
 
 /// 消息总线

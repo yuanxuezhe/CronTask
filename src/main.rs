@@ -15,73 +15,62 @@ use log::LevelFilter;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化日志，设置日志级别为 Info
+    // 自定义日志格式，移除模块路径
     env_logger::builder()
         .filter_level(LevelFilter::Info)
+        .format(|buf, record| {
+            use std::io::Write;
+            writeln!(
+                buf,
+                "[{}][{}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                record.level(),
+                record.args()
+            )
+        })
         .init();
     
+    // 创建任务管理器以获取消息总线
     let db_path = "evdata.db";
+    let db = Database::new(db_path).await?;
+
+    // 创建任务管理器
+    // 参数说明：重载间隔10秒，tick间隔1秒，总槽位86400，非高精度模式
+    let cron_task = CronTask::new(10000, 1000, 86400, false, db);
+    // 初始化加载任务
+    cron_task.init_load_tasks().await;
+    // 休眠3秒
+    //tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     
-    // 记录数据库文件路径
-    log::info!("数据库文件路径: {}", db_path);
+    info_log!("初始化任务管理器");
+
+    // 使用消息总线记录所有日志
+    info_log!("数据库文件路径: {}", db_path);
         
     // 如果数据库文件不存在则创建它
     if !Path::new(db_path).exists() {
-        log::info!("创建新数据库文件");
+        info_log!("创建新数据库文件");
         fs::File::create(db_path)?;
     }
 
     // 连接数据库
-    log::info!("连接数据库");
+    info_log!("连接数据库");
     let db = Database::new(db_path).await?;
 
     // 初始化表结构
-    log::info!("初始化表结构");
+    info_log!("初始化表结构");
     Task::init(&db).await?;
 
-    // 创建任务管理器
-    // 参数说明：重载间隔10秒，tick间隔1秒，总槽位86400，非高精度模式
-    log::info!("初始化任务管理器");
-    let cron_task = CronTask::new(10000, 1000, 86400, false, db);
-
-    log::info!("时间轮运行中...");
+    info_log!("时间轮运行中...");
     
     // 打印缓存中的任务列表
     let tasks = cron_task.get_all_tasks_from_cache().await;
-    log::info!("缓存中的任务列表: {:?}", tasks);
+    info_log!("缓存中的任务列表: {:?}", tasks);
 
     // 等待 Ctrl+C 信号
-    log::info!("等待终止信号");
+    info_log!("等待终止信号");
     signal::ctrl_c().await.expect("监听信号失败");
-    log::info!("收到 Ctrl+C，停止所有任务...");
+    info_log!("收到 Ctrl+C，停止所有任务...");
 
     Ok(())
 }
-
-
-
-    // let task1 = Task {
-    //     taskid: 1,
-    //     taskname: "Task1".to_string(),
-    //     start_date: "20250512".to_string(),
-    //     end_date: "20250612".to_string(),
-    //     cycle_type: "0".to_string(),
-    //     period: "D".to_string(),
-    //     time_point: "133410".to_string(),
-    //     retry_type: "1".to_string(),
-    //     retry_interval: 10000,
-    //     retry_count: 3,
-    //     current_trigger_count: 0,
-    //     status: "A".to_string(),
-    // };
-
-    // // 插入任务
-    // match task1.insert(&db).await {
-    //     Ok(affected_rows) => {
-    //         // 插入成功，返回影响行数
-    //         println!("effect rows:{}", affected_rows) // 可根据实际需求返回或处理
-    //     },
-    //     Err(e) => {
-    //         // 插入失败，记录错误
-    //         eprintln!("[ERROR] 定时任务插入失败: {}", e);
-    //     }
-    // }

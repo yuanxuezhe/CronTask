@@ -8,7 +8,9 @@ use dbcore::Database;
 use std::collections::HashMap;
 use crate::task::TaskDetail;
 use crate::comm::consts::RELOAD_TASK_NAME;
-use log::info;
+
+// 导入日志宏
+use crate::{info_log, error_log};
 
 pub struct CronTask {
     /// 任务调度器
@@ -59,6 +61,9 @@ impl CronTask {
             time_bus: time_bus.clone(),
         });
 
+        // 设置全局 CronTask 实例，以便日志宏可以访问消息总线
+        crate::comm::log::set_cron_task(&instance);
+
         // 启动时间轮
         let time_wheel = instance.taskscheduler.time_wheel();
         let time_bus_for_wheel = time_bus.clone();
@@ -79,18 +84,26 @@ impl CronTask {
             instance_message_handler.handle_messages().await;
         });
         
+        // 不再在构造函数中发送初始重新加载任务消息，而是在构造完成后手动调用
+        instance
+    }
+    
+    /// 初始化加载任务
+    /// 在 CronTask 构造完成后调用此方法来触发初始任务加载
+    pub async fn init_load_tasks(self: &Arc<Self>) {
         // 发送初始重新加载任务消息
         let reload_name = RELOAD_TASK_NAME.to_string();
+        let reload_interval = self.reload_interval;
+        let message_bus = self.message_bus.clone();
+        
         tokio::task::spawn(async move {
             let _ = message_bus.send(CronMessage::ScheduleTask {
                 timestamp: chrono::Local::now().naive_local(),
-                delay_ms: reload_millis,
+                delay_ms: reload_interval,
                 key: reload_name,
                 arg: "__reload_tasks__".to_string(),
             });
         });
-
-        instance
     }
     
     /// 处理消息总线中的消息
@@ -111,13 +124,23 @@ impl CronTask {
                 CronMessage::ExecuteTask { key, eventdata } => {
                     let _ = self.on_call_back_inner(key, eventdata).await;
                 },
+                CronMessage::Log { level, message } => {
+                    // 异步处理日志消息
+                    match level {
+                        log::Level::Error => log::error!("{}", message),
+                        log::Level::Warn => log::warn!("{}", message),
+                        log::Level::Info => log::info!("{}", message),
+                        log::Level::Debug => log::debug!("{}", message),
+                        log::Level::Trace => log::trace!("{}", message),
+                    }
+                }
             }
         }
     }
     
     /// 处理任务调度消息
     async fn handle_schedule_task(&self, timestamp: chrono::NaiveDateTime, delay_ms: u64, key: String, arg: String) {
-        println!("crontask::schedule 调度任务: {} at {} + {}ms", key, timestamp, delay_ms);
+        info_log!("task[{}] add at {} + {}ms", key, timestamp, delay_ms);
         let result = self.taskscheduler.schedule(
             timestamp,
             std::time::Duration::from_millis(delay_ms),
@@ -132,13 +155,13 @@ impl CronTask {
         ).await;
         
         if let Err(e) = result {
-            eprintln!("任务调度失败: {} - {}", key, e);
+            error_log!("任务调度失败: {} - {}", key, e);
         }
     }
     
     /// 处理任务取消消息
     async fn handle_cancel_task(&self, timestamp: chrono::NaiveDateTime, delay_ms: u64, key: String) {
-        println!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp, delay_ms);
+        info_log!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp, delay_ms);
         let result = self.taskscheduler.cancel(
             timestamp,
             std::time::Duration::from_millis(delay_ms),
@@ -146,7 +169,7 @@ impl CronTask {
         ).await;
         
         if let Err(e) = result {
-            eprintln!("任务取消失败: {} - {}", key, e);
+            error_log!("任务取消失败: {} - {}", key, e);
         }
     }
     
@@ -176,6 +199,6 @@ impl CronTask {
         let mut guard = self.inner.lock().await;
         guard.taskdetails.clear();
         guard.tasks.clear();
-        info!("所有任务已清空");
+        info_log!("所有任务已清空");
     }
 }

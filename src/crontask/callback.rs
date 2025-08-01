@@ -7,6 +7,9 @@ use crate::comm::consts::*;
 use crate::comm::utils::gen_task_key;
 use crate::task::TaskDetail;
 
+// 导入日志宏
+use crate::info_log;
+
 impl CronTask {
     /// 回调函数包装器，通过消息总线发送任务执行消息
     /// 
@@ -32,7 +35,7 @@ impl CronTask {
     /// 返回Result<(), String>表示执行结果
     pub async fn on_call_back_inner(&self, key: String, eventdata: String) -> Result<(), String> {
         let now = Utc::now().with_timezone(&Shanghai);
-        println!("[{}] 执行任务[{}]: {}", now, key, eventdata);
+        info_log!("task[{}] run with param:{}", key, eventdata);
         if key == RELOAD_TASK_NAME {
             let _ = self.message_bus.send(CronMessage::ScheduleTask {
                 timestamp: Local::now().naive_local(), 
@@ -71,7 +74,7 @@ impl CronTask {
         };
 
         if taskdetail.current_trigger_count >= task.retry_count {
-            println!("任务 {} 达到最大重试次数，停止调度", task.taskname);
+            info_log!("任务 {} 达到最大重试次数，停止调度", task.taskname);
             taskdetail.status = TASK_STATUS_UNMONITORED;
             self.update_task_detail(taskdetail).await?;
             return Ok(());
@@ -88,7 +91,7 @@ impl CronTask {
         }) {
             Ok(_) => {
                 taskdetail.status = TASK_STATUS_RETRY;
-                println!("任务重试调度成功: {}", task_key);
+                info_log!("任务重试调度成功: {}", task_key);
             },
             Err(e) => {
                 taskdetail.status = TASK_STATUS_UNMONITORED;

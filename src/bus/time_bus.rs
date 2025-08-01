@@ -5,7 +5,6 @@ use chrono_tz::Asia::Shanghai;
 use std::time::Duration;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 时间事件类型 - 使用位值表示不同精度的时间信号
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,76 +80,110 @@ impl TimeBus {
     
     /// 运行时间脉冲生成器
     async fn run_time_generator(self: Arc<Self>) {
-        let mut millisecond_interval = tokio::time::interval(Duration::from_millis(1));
-        
-        // 记录上一次触发的时间单位，避免重复触发
-        let mut last_second = None;
-        let mut last_minute = None;
-        let mut last_hour = None;
-        let mut last_day = None;
-        let mut last_week = None;
+        let mut interval = tokio::time::interval(Duration::from_millis(1)); // 1ms精度
+        let mut last_second = 0;
+        let mut last_minute = 0;
+        let mut last_hour = 0;
+        let mut last_day = 0;
+        let mut last_week = 0;
         
         loop {
-            millisecond_interval.tick().await;
+            interval.tick().await;
             
             let now = Self::now();
-            let mut signal_type = 0b000001; // 毫秒信号 (1)
+            let signal_type = Self::determine_signal_type(
+                now, 
+                &mut last_second, 
+                &mut last_minute, 
+                &mut last_hour, 
+                &mut last_day, 
+                &mut last_week
+            );
             
-            // 检查是否需要触发秒事件
-            if last_second != Some(now.second()) {
-                last_second = Some(now.second());
-                signal_type |= 0b000010; // 添加秒信号 (2)
+            if signal_type > 0 {
+                let pulse = TimePulse {
+                    timestamp: now,
+                    signal_type,
+                };
+                
+                // 发送脉冲到订阅者
+                let _ = self.sender.send(pulse.clone());
+                
+                // 执行注册的回调函数
+                self.execute_callbacks(pulse).await;
             }
-            
-            // 检查是否需要触发分钟事件
-            if last_minute != Some(now.minute()) {
-                last_minute = Some(now.minute());
-                signal_type |= 0b000100; // 添加分钟信号 (4)
-            }
-            
-            // 检查是否需要触发小时事件
-            if last_hour != Some(now.hour()) {
-                last_hour = Some(now.hour());
-                signal_type |= 0b001000; // 添加小时信号 (8)
-            }
-            
-            // 检查是否需要触发天事件
-            if last_day != Some(now.date_naive()) {
-                last_day = Some(now.date_naive());
-                signal_type |= 0b010000; // 添加天信号 (16)
-            }
-            
-            // 检查是否需要触发周事件
-            let week_number = now.iso_week().week();
-            if last_week != Some(week_number) {
-                last_week = Some(week_number);
-                signal_type |= 0b100000; // 添加周信号 (32)
-            }
-            
-            // 创建时间脉冲
-            let pulse = TimePulse {
-                timestamp: now,
-                signal_type,
-            };
-            
-            // 发送时间脉冲
-            let _ = self.send(pulse);
-            
-            // 直接执行回调函数
-            self.execute_callbacks(signal_type, pulse).await;
         }
     }
     
-    /// 执行回调函数
-    async fn execute_callbacks(&self, signal_type: u8, pulse: TimePulse) {
+    /// 确定需要发送的信号类型
+    fn determine_signal_type(
+        now: DateTime<chrono_tz::Tz>,
+        last_second: &mut i64,
+        last_minute: &mut i64,
+        last_hour: &mut i64,
+        last_day: &mut i64,
+        last_week: &mut i64,
+    ) -> u8 {
+        let mut signal_type = 0;
+        
+        // 毫秒信号（总是发送）
+        signal_type |= 0b000001;
+        
+        // 秒信号
+        let second = now.timestamp();
+        if second != *last_second {
+            *last_second = second;
+            signal_type |= 0b000010;
+        }
+        
+        // 分钟信号
+        let minute = now.timestamp() / 60;
+        if minute != *last_minute {
+            *last_minute = minute;
+            signal_type |= 0b000100;
+        }
+        
+        // 小时信号
+        let hour = now.timestamp() / 3600;
+        if hour != *last_hour {
+            *last_hour = hour;
+            signal_type |= 0b001000;
+        }
+        
+        // 天信号
+        let day = now.timestamp() / 86400;
+        if day != *last_day {
+            *last_day = day;
+            signal_type |= 0b010000;
+        }
+        
+        // 周信号
+        let week = now.iso_week().week() as i64;
+        if week != *last_week {
+            *last_week = week;
+            signal_type |= 0b100000;
+        }
+        
+        signal_type
+    }
+    
+    /// 执行注册的回调函数
+    async fn execute_callbacks(&self, pulse: TimePulse) {
         let callbacks = self.callbacks.read().await;
-        // 遍历所有注册的回调函数
-        for (&registered_signal_type, callbacks_for_type) in callbacks.iter() {
-            // 使用位与操作检查是否应该触发此回调
-            if signal_type & registered_signal_type != 0 {
-                // 执行所有匹配的回调函数
+        
+        // 执行精确匹配的回调
+        if let Some(callbacks_for_type) = callbacks.get(&pulse.signal_type) {
+            for callback in callbacks_for_type {
+                let pulse_clone = pulse.clone();
+                callback(pulse_clone);
+            }
+        }
+        
+        // 执行组合信号的回调（例如同时订阅了毫秒和秒的回调）
+        for (registered_type, callbacks_for_type) in callbacks.iter() {
+            if pulse.signal_type & *registered_type == *registered_type {
                 for callback in callbacks_for_type {
-                    let pulse_clone = pulse; // 创建脉冲事件的克隆
+                    let pulse_clone = pulse.clone();
                     callback(pulse_clone);
                 }
             }
