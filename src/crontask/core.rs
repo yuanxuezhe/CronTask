@@ -34,16 +34,14 @@ impl CronTask {
     /// * `reload_millis` - 重新加载任务的时间间隔（毫秒）
     /// * `tick_mills` - 时间轮滴答间隔（毫秒）
     /// * `total_slots` - 时间轮总槽数
-    /// * `high_precision` - 是否使用高精度模式
     /// * `db` - 数据库连接
     /// 
     /// # 返回值
     /// 返回一个Arc包装的CronTask实例
-    pub fn new(reload_millis: u64, tick_mills: u64, total_slots: usize, high_precision: bool, db: Database) -> Arc<Self> {
+    pub fn new(reload_millis: u64, tick_mills: u64, total_slots: usize, db: Database) -> Arc<Self> {
         let task_scheduler = Arc::new(TaskScheduler::new(
             std::time::Duration::from_millis(tick_mills),
-            total_slots,
-            high_precision
+            total_slots
         ));
         
         let message_bus = MessageBus::new();

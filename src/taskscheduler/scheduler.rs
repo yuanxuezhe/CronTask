@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use super::request::TaskRequest;
 use std::sync::Arc;
 use super::timewheel::TimeWheel;
-use crate::comm::error::TaskSchedulerError;
+use crate::comm::error::CronTaskError;
 
 const CHANNEL_BUFFER_SIZE: usize = 1000;
 
@@ -22,11 +22,10 @@ impl TaskScheduler {
     /// # 参数
     /// * `tick_duration` - 时间轮滴答间隔
     /// * `total_slots` - 时间轮总槽数
-    /// * `_high_precision` - 是否使用高精度模式（已废弃，仅为了向后兼容保留参数）
     /// 
     /// # 返回值
     /// 返回新的任务调度器实例
-    pub fn new(tick_duration: Duration, total_slots: usize, _high_precision: bool) -> Self {
+    pub fn new(tick_duration: Duration, total_slots: usize) -> Self {
         let (sender, receiver) = mpsc::channel::<TaskRequest>(CHANNEL_BUFFER_SIZE);
         let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
         let tw_clone: Arc<TimeWheel> = Arc::clone(&time_wheel);
@@ -81,7 +80,7 @@ impl TaskScheduler {
         key: K,
         arg: String, 
         task: F
-    ) -> Result<String, TaskSchedulerError>
+    ) -> Result<String, CronTaskError>
     where
         F: Fn(String, String) + Send + Sync + 'static,
         K: ToString,
@@ -96,8 +95,8 @@ impl TaskScheduler {
             task: arc_task,
             resp: resp_tx,
         };
-        self.sender.send(req).await.map_err(|_| TaskSchedulerError::SendError)?;
-        resp_rx.await.map_err(|_| TaskSchedulerError::RecvError)?
+        self.sender.send(req).await.map_err(|_| CronTaskError::TaskSendError)?;
+        resp_rx.await.map_err(|_| CronTaskError::TaskRecvError)?
     }
     
     /// 从时间轮中移除指定任务
@@ -114,7 +113,7 @@ impl TaskScheduler {
         timestamp: NaiveDateTime,
         delay: Duration,
         key: K,
-    ) -> Result<String, TaskSchedulerError>
+    ) -> Result<String, CronTaskError>
     where
         K: ToString,
     {
@@ -125,8 +124,8 @@ impl TaskScheduler {
             key: key.to_string(),
             resp: resp_tx,
         };
-        self.sender.send(req).await.map_err(|_| TaskSchedulerError::SendError)?;
-        resp_rx.await.map_err(|_| TaskSchedulerError::RecvError)?
+        self.sender.send(req).await.map_err(|_| CronTaskError::TaskSendError)?;
+        resp_rx.await.map_err(|_| CronTaskError::TaskRecvError)?
     }
     
     /// 获取时间轮实例，用于外部驱动

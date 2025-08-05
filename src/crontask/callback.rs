@@ -34,7 +34,7 @@ impl CronTask {
     /// # 返回值
     /// 返回Result<(), String>表示执行结果
     pub async fn on_call_back_inner(&self, key: String, eventdata: String) -> Result<(), String> {
-        let now = Utc::now().with_timezone(&Shanghai);
+        let _now = Utc::now().with_timezone(&Shanghai);
         info_log!("task[{}] run with param:{}", key, eventdata);
         if key == RELOAD_TASK_NAME {
             let _ = self.message_bus.send(CronMessage::ScheduleTask {

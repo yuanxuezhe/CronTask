@@ -11,6 +11,7 @@ use std::path::Path;
 use task::model::Task;
 use crate::crontask::core::CronTask;
 use log::LevelFilter;
+use crate::comm::config::Config;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,42 +31,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .init();
     
-    // 创建任务管理器以获取消息总线
-    let db_path = "evdata.db";
-    let db = Database::new(db_path).await?;
-
-    // 创建任务管理器
-    // 参数说明：重载间隔10秒，tick间隔1秒，总槽位86400，非高精度模式
-    let cron_task = CronTask::new(10000, 1000, 86400, false, db);
-    // 初始化加载任务
-    cron_task.init_load_tasks().await;
-    // 休眠3秒
-    //tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // 从配置文件加载配置
+    let config = Config::from_file("config.toml").unwrap_or_else(|e| {
+        eprintln!("警告: 无法加载配置文件 config.toml: {}，使用默认配置", e);
+        Config::default()
+    });
     
-    info_log!("初始化任务管理器");
-
-    // 使用消息总线记录所有日志
+    let db_path = config.database.path.clone();
     info_log!("数据库文件路径: {}", db_path);
-        
     // 如果数据库文件不存在则创建它
-    if !Path::new(db_path).exists() {
+    if !Path::new(&db_path).exists() {
         info_log!("创建新数据库文件");
-        fs::File::create(db_path)?;
+        fs::File::create(&db_path)?;
     }
 
     // 连接数据库
     info_log!("连接数据库");
-    let db = Database::new(db_path).await?;
+    let db = Database::new(&db_path).await?;
 
     // 初始化表结构
     info_log!("初始化表结构");
     Task::init(&db).await?;
 
+    // 创建任务管理器
+    // 参数从配置文件中读取
+    let cron_task = CronTask::new(
+        config.cron.reload_interval_ms,
+        config.scheduler.tick_interval_ms,
+        config.scheduler.total_slots,
+        db
+    );
+    
+    // 初始化加载任务
+    cron_task.init_load_tasks().await;
+    
+    info_log!("初始化任务管理器");
     info_log!("时间轮运行中...");
     
     // 打印缓存中的任务列表
-    let tasks = cron_task.get_all_tasks_from_cache().await;
-    info_log!("缓存中的任务列表: {:?}", tasks);
+    // let tasks = cron_task.get_all_tasks_from_cache().await;
+    // info_log!("缓存中的任务列表: {:?}", tasks);
 
     // 等待 Ctrl+C 信号
     info_log!("等待终止信号");

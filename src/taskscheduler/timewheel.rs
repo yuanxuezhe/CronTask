@@ -6,7 +6,7 @@ use chrono::{NaiveDateTime, TimeDelta, Utc};
 use chrono_tz::Asia::Shanghai;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use crate::comm::error::TaskSchedulerError;
+use crate::comm::error::CronTaskError;
 
 pub type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 
@@ -61,11 +61,11 @@ impl TimeWheel {
     /// 
     /// # 返回值
     /// 返回时间对应的绝对槽位索引
-    pub fn get_real_slot(&self, timestamp: NaiveDateTime) -> Result<usize, TaskSchedulerError> {
+    pub fn get_real_slot(&self, timestamp: NaiveDateTime) -> Result<usize, CronTaskError> {
         let duration = timestamp - self.base_time;
         let nanos = match duration.num_nanoseconds() {
             Some(nanos) if nanos >= 0 => nanos as u64,
-            _ => return Err(TaskSchedulerError::TaskPastDue),
+            _ => return Err(CronTaskError::TaskPastDue),
         };
         let tick_index = nanos / self.tick_duration.as_nanos() as u64;
         Ok(tick_index as usize)
@@ -78,7 +78,7 @@ impl TimeWheel {
     /// 
     /// # 返回值
     /// 返回时间对应的槽位索引
-    pub fn get_slot(&self, timestamp: NaiveDateTime) -> Result<usize, TaskSchedulerError> {
+    pub fn get_slot(&self, timestamp: NaiveDateTime) -> Result<usize, CronTaskError> {
         Ok(self.get_real_slot(timestamp)? % self.total_slots)
     }
     
@@ -93,24 +93,24 @@ impl TimeWheel {
     /// 
     /// # 返回值
     /// 返回操作结果
-    pub async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, TaskSchedulerError> {
+    pub async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, CronTaskError> {
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
         
         // 计算目标时间
         let delta = TimeDelta::from_std(delay)
-            .map_err(|e| TaskSchedulerError::TimeConversionFailed(format!("时间转换失败: {}", e)))?;
+            .map_err(|e| CronTaskError::TimeConversionFailed(format!("时间转换失败: {}", e)))?;
         let target_time = timestamp.checked_add_signed(delta)
-            .ok_or(TaskSchedulerError::TimeOverflow)?;
+            .ok_or(CronTaskError::TimeOverflow)?;
         let current_slot = self.get_real_slot(now)?;
         let target_slot = self.get_real_slot(target_time)?;
         if target_time < now {
-            return Err(TaskSchedulerError::TaskPastDue);
+            return Err(CronTaskError::TaskPastDue);
         }
         if target_slot <= current_slot {
-            return Err(TaskSchedulerError::TaskPastDue);
+            return Err(CronTaskError::TaskPastDue);
         }
         if target_slot - current_slot >= self.total_slots {
-            return Err(TaskSchedulerError::TaskTooFarInFuture);
+            return Err(CronTaskError::TaskTooFarInFuture);
         }
         
         // 添加任务
@@ -118,7 +118,7 @@ impl TimeWheel {
         let mut tasks = slot.tasks.lock().await;
         
         if tasks.contains_key(&key) {
-            return Err(TaskSchedulerError::TaskAlreadyExists);
+            return Err(CronTaskError::TaskAlreadyExists);
         }
         
         tasks.insert(key.clone(), (task, arg));
@@ -134,14 +134,14 @@ impl TimeWheel {
     /// 
     /// # 返回值
     /// 返回操作结果
-    pub async fn del_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String) -> Result<String, TaskSchedulerError> {
+    pub async fn del_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String) -> Result<String, CronTaskError> {
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
         
         // 计算目标时间
         let delta = TimeDelta::from_std(delay)
-            .map_err(|e| TaskSchedulerError::TimeConversionFailed(e.to_string()))?;
+            .map_err(|e| CronTaskError::TimeConversionFailed(e.to_string()))?;
         let target_time = timestamp.checked_add_signed(delta)
-            .ok_or(TaskSchedulerError::TimeOverflow)?;
+            .ok_or(CronTaskError::TimeOverflow)?;
         
         // 如果任务时间已过时
         if target_time < now {
