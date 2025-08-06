@@ -1,17 +1,26 @@
+// 标准库导入
 use std::sync::Arc;
+use std::collections::HashMap;
+
+// 外部 crate 导入
 use tokio::sync::Mutex;
+use chrono::Local;
+
+// 内部模块导入
 use crate::scheduler::task_scheduler::TaskScheduler;
 use crate::core::state::InnerState;
 use crate::message::message_bus::{MessageBus, CronMessage};
 use crate::message::time_bus::TimeBus;
-use dbcore::Database;
-use std::collections::HashMap;
-use crate::task_engine::model::TaskDetail;
 use crate::common::consts::RELOAD_TASK_NAME;
+use crate::task_engine::model::TaskDetail;
+
+// 外部 crate 使用声明
+use dbcore::Database;
 
 // 导入日志宏
 use crate::{info_log, error_log};
 
+/// 核心任务调度管理器
 pub struct CronTask {
     /// 任务调度器
     pub taskscheduler: Arc<TaskScheduler>,
@@ -28,7 +37,7 @@ pub struct CronTask {
 }
 
 impl CronTask {
-    /// 创建新的CronTask实例
+    /// 创建新的 CronTask 实例
     /// 
     /// # 参数
     /// * `reload_millis` - 重新加载任务的时间间隔（毫秒）
@@ -37,8 +46,13 @@ impl CronTask {
     /// * `db` - 数据库连接
     /// 
     /// # 返回值
-    /// 返回一个Arc包装的CronTask实例
-    pub fn new(reload_millis: u64, tick_mills: u64, total_slots: usize, db: Database) -> Arc<Self> {
+    /// 返回一个 Arc 包装的 CronTask 实例
+    pub fn new(
+        reload_millis: u64, 
+        tick_mills: u64, 
+        total_slots: usize, 
+        db: Database
+    ) -> Arc<Self> {
         let task_scheduler = Arc::new(TaskScheduler::new(
             std::time::Duration::from_millis(tick_mills),
             total_slots
@@ -63,26 +77,11 @@ impl CronTask {
         crate::common::log::set_cron_task(&instance);
 
         // 启动时间轮
-        let time_wheel = instance.taskscheduler.time_wheel();
-        let time_bus_for_wheel = time_bus.clone();
-        tokio::spawn(async move {
-            time_bus_for_wheel.register_callback(0b000010, move |_pulse| {
-                let time_wheel_clone = time_wheel.clone();
-                tokio::spawn(async move {
-                    time_wheel_clone.run(|_timestamp| async move {
-                        // 时间轮滴答回调，可以在这里添加日志或其他处理
-                    }).await;
-                });
-            }).await;
-        });
-
-        // 启动消息处理器
-        let instance_message_handler = instance.clone();
-        tokio::spawn(async move {
-            instance_message_handler.handle_messages().await;
-        });
+        Self::start_time_wheel(&instance, time_bus);
         
-        // 不再在构造函数中发送初始重新加载任务消息，而是在构造完成后手动调用
+        // 启动消息处理器
+        Self::start_message_handler(instance.clone());
+
         instance
     }
     
@@ -96,7 +95,7 @@ impl CronTask {
         
         tokio::task::spawn(async move {
             let _ = message_bus.send(CronMessage::ScheduleTask {
-                timestamp: chrono::Local::now().naive_local(),
+                timestamp: Local::now().naive_local(),
                 delay_ms: reload_interval,
                 key: reload_name,
                 arg: "__reload_tasks__".to_string(),
@@ -125,11 +124,11 @@ impl CronTask {
                 CronMessage::Log { level, message } => {
                     // 异步处理日志消息
                     match level {
-                        log::Level::Error => log::error!("{}", message),
-                        log::Level::Warn => log::warn!("{}", message),
-                        log::Level::Info => log::info!("{}", message),
-                        log::Level::Debug => log::debug!("{}", message),
-                        log::Level::Trace => log::trace!("{}", message),
+                        ::log::Level::Error => ::log::error!("{}", message),
+                        ::log::Level::Warn => ::log::warn!("{}", message),
+                        ::log::Level::Info => ::log::info!("{}", message),
+                        ::log::Level::Debug => ::log::debug!("{}", message),
+                        ::log::Level::Trace => ::log::trace!("{}", message),
                     }
                 }
             }
@@ -198,5 +197,31 @@ impl CronTask {
         guard.taskdetails.clear();
         guard.tasks.clear();
         info_log!("所有任务已清空");
+    }
+}
+
+// 私有辅助函数实现
+impl CronTask {
+    /// 启动时间轮
+    fn start_time_wheel(instance: &Arc<CronTask>, time_bus: Arc<TimeBus>) {
+        let time_wheel = instance.taskscheduler.time_wheel();
+        let time_bus_for_wheel = time_bus.clone();
+        tokio::spawn(async move {
+            time_bus_for_wheel.register_callback(0b000010, move |_pulse| {
+                let time_wheel_clone = time_wheel.clone();
+                tokio::spawn(async move {
+                    time_wheel_clone.run(|_timestamp| async move {
+                        // 时间轮滴答回调，可以在这里添加日志或其他处理
+                    }).await;
+                });
+            }).await;
+        });
+    }
+    
+    /// 启动消息处理器
+    fn start_message_handler(instance: Arc<Self>) {
+        tokio::spawn(async move {
+            instance.handle_messages().await;
+        });
     }
 }

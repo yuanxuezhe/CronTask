@@ -14,6 +14,7 @@ mod task_engine;
 
 // 内部模块使用声明
 use crate::common::config::Config;
+use crate::core::core::CronTask;
 use crate::task_engine::model::Task;
 
 // 外部 crate 使用声明
@@ -88,9 +89,9 @@ async fn init_database(config: &Config) -> Result<Database, Box<dyn std::error::
 }
 
 /// 启动任务管理器
-async fn start_task_manager(config: &Config, db: Database) -> Result<std::sync::Arc<crate::core::cron_task::CronTask>, Box<dyn std::error::Error>> {
+async fn start_task_manager(config: &Config, db: Database) -> Result<std::sync::Arc<CronTask>, Box<dyn std::error::Error>> {
     // 创建任务管理器
-    let cron_task = crate::core::cron_task::CronTask::new(
+    let cron_task = CronTask::new(
         config.cron.reload_interval_ms,
         config.scheduler.tick_interval_ms,
         config.scheduler.total_slots,
@@ -107,7 +108,7 @@ async fn start_task_manager(config: &Config, db: Database) -> Result<std::sync::
 }
 
 /// 等待终止信号并处理
-async fn await_termination_signal(_cron_task: std::sync::Arc<crate::core::cron_task::CronTask>) -> Result<(), Box<dyn std::error::Error>> {
+async fn await_termination_signal(_cron_task: std::sync::Arc<CronTask>) -> Result<(), Box<dyn std::error::Error>> {
     // 等待 Ctrl+C 信号
     info_log!("等待终止信号");
     signal::ctrl_c().await.expect("监听信号失败");

@@ -8,7 +8,7 @@ use chrono_tz::Asia::Shanghai;
 // 内部模块导入
 use crate::common::consts::*;
 use crate::common::utils::gen_task_key;
-use crate::core::cron_task::CronTask;
+use crate::core::core::CronTask;
 use crate::message::message_bus::CronMessage;
 use crate::task_engine::model::TaskDetail;
 

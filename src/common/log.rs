@@ -9,19 +9,19 @@ use chrono_tz::Asia::Shanghai;
 static CRON_TASK_PTR: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
 /// 设置全局 CronTask 实例
-pub fn set_cron_task(task: &crate::core::cron_task::CronTask) {
-    let ptr = task as *const crate::core::cron_task::CronTask as *mut u8;
+pub fn set_cron_task(task: &crate::core::core::CronTask) {
+    let ptr = task as *const crate::core::core::CronTask as *mut u8;
     CRON_TASK_PTR.store(ptr, Ordering::Relaxed);
 }
 
 /// 获取全局 CronTask 实例
-fn get_cron_task() -> Option<&'static crate::core::cron_task::CronTask> {
+fn get_cron_task() -> Option<&'static crate::core::core::CronTask> {
     let ptr = CRON_TASK_PTR.load(Ordering::Relaxed);
     if ptr.is_null() {
         None
     } else {
         unsafe {
-            Some(&*(ptr as *const crate::core::cron_task::CronTask))
+            Some(&*(ptr as *const crate::core::core::CronTask))
         }
     }
 }
