@@ -80,17 +80,6 @@ impl TimeWheel {
         Ok(tick_index as usize)
     }
     
-    /// 获取时间对应的槽位（取模后的结果）
-    /// 
-    /// # 参数
-    /// * `timestamp` - 时间戳
-    /// 
-    /// # 返回值
-    /// 返回时间对应的槽位索引
-    pub fn get_slot(&self, timestamp: NaiveDateTime) -> Result<usize, CronTaskError> {
-        Ok(self.get_real_slot(timestamp)? % self.total_slots)
-    }
-    
     /// 添加任务到时间轮
     /// 
     /// # 参数

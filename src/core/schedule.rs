@@ -168,7 +168,7 @@ impl CronTask {
         let mut new_keys = HashSet::new();
         
         for task in new_tasks.values() {
-            let timepoints = task.next_n_schedules(10);
+            let timepoints = task.next_n_schedules(self.max_schedule_days);
             if timepoints.is_empty() {
                 continue;
             }

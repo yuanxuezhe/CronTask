@@ -67,11 +67,6 @@ impl MessageBus {
     pub fn send(&self, message: CronMessage) -> Result<(), broadcast::error::SendError<CronMessage>> {
         self.sender.send(message).map(|_| ())
     }
-    
-    /// 获取发送者（用于测试）
-    pub fn sender(&self) -> broadcast::Sender<CronMessage> {
-        self.sender.clone()
-    }
 }
 
 // 为MessageBus实现Clone特性

@@ -25,4 +25,4 @@ pub struct Task {
     pub retry_count: i32,
     pub status: String,
     pub discribe: String,
-} 
+}

@@ -11,7 +11,7 @@ use crate::scheduler::task_scheduler::TaskScheduler;
 use crate::core::state::InnerState;
 use crate::message::message_bus::{MessageBus, CronMessage};
 use crate::message::time_bus::TimeBus;
-use crate::common::consts::RELOAD_TASK_NAME;
+use crate::common::consts::{RELOAD_TASK_NAME, TASK_STATUS_MONITORING};
 use crate::task_engine::model::TaskDetail;
 
 // 外部 crate 使用声明
@@ -28,6 +28,8 @@ pub struct CronTask {
     pub inner: Arc<Mutex<InnerState>>,
     /// 重新加载任务的时间间隔（毫秒）
     pub reload_interval: u64,
+    /// 最大调度天数
+    pub max_schedule_days: u32,
     /// 数据库连接
     pub db: Database,
     /// 消息总线
@@ -43,6 +45,7 @@ impl CronTask {
     /// * `reload_millis` - 重新加载任务的时间间隔（毫秒）
     /// * `tick_mills` - 时间轮滴答间隔（毫秒）
     /// * `total_slots` - 时间轮总槽数
+    /// * `max_schedule_days` - 最大调度天数
     /// * `db` - 数据库连接
     /// 
     /// # 返回值
@@ -51,6 +54,7 @@ impl CronTask {
         reload_millis: u64, 
         tick_mills: u64, 
         total_slots: usize, 
+        max_schedule_days: u32,
         db: Database
     ) -> Arc<Self> {
         let task_scheduler = Arc::new(TaskScheduler::new(
@@ -68,6 +72,7 @@ impl CronTask {
                 tasks: HashMap::new(),
             })),
             reload_interval: reload_millis,
+            max_schedule_days,
             db,
             message_bus: message_bus.clone(),
             time_bus: time_bus.clone(),
@@ -178,7 +183,7 @@ impl CronTask {
         let guard = self.inner.lock().await;
         guard.taskdetails
             .iter()
-            .filter(|detail| detail.status == crate::common::consts::TASK_STATUS_MONITORING)
+            .filter(|detail| detail.status == TASK_STATUS_MONITORING)
             .count()
     }
     

@@ -95,6 +95,7 @@ async fn start_task_manager(config: &Config, db: Database) -> Result<std::sync::
         config.cron.reload_interval_ms,
         config.scheduler.tick_interval_ms,
         config.scheduler.total_slots,
+        config.cron.max_schedule_days,
         db
     );
     
