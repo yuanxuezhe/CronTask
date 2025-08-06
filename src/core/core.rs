@@ -1,13 +1,13 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::taskscheduler::TaskScheduler;
-use crate::crontask::state::InnerState;
-use crate::bus::{message_bus::MessageBus, time_bus::TimeBus};
-use crate::bus::message_bus::CronMessage;
+use crate::scheduler::task_scheduler::TaskScheduler;
+use crate::core::state::InnerState;
+use crate::message::message_bus::{MessageBus, CronMessage};
+use crate::message::time_bus::TimeBus;
 use dbcore::Database;
 use std::collections::HashMap;
-use crate::task::TaskDetail;
-use crate::comm::consts::RELOAD_TASK_NAME;
+use crate::task_engine::model::TaskDetail;
+use crate::common::consts::RELOAD_TASK_NAME;
 
 // 导入日志宏
 use crate::{info_log, error_log};
@@ -60,7 +60,7 @@ impl CronTask {
         });
 
         // 设置全局 CronTask 实例，以便日志宏可以访问消息总线
-        crate::comm::log::set_cron_task(&instance);
+        crate::common::log::set_cron_task(&instance);
 
         // 启动时间轮
         let time_wheel = instance.taskscheduler.time_wheel();
@@ -179,7 +179,7 @@ impl CronTask {
         let guard = self.inner.lock().await;
         guard.taskdetails
             .iter()
-            .filter(|detail| detail.status == crate::comm::consts::TASK_STATUS_MONITORING)
+            .filter(|detail| detail.status == crate::common::consts::TASK_STATUS_MONITORING)
             .count()
     }
     

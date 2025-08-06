@@ -1,22 +1,22 @@
 use std::sync::Arc;
 use chrono::NaiveDateTime;
-use crate::bus::message_bus::CronMessage;
-use crate::comm::consts::*;
-use crate::comm::utils::gen_task_key;
+use crate::message::message_bus::CronMessage;
+use crate::common::consts::*;
+use crate::common::utils::gen_task_key;
 use std::collections::HashSet;
-use crate::task::TaskDetail;
+use crate::task_engine::model::TaskDetail;
 
 // 导入日志宏
 use crate::{info_log, error_log};
 
-impl crate::crontask::core::CronTask {
+impl crate::core::cron_task::CronTask {
     /// 检查所有任务的状态并根据需要进行调度或取消调度
     pub async fn reschedule_all(self: &Arc<Self>) {
         let mut to_cancel = Vec::new();
         let mut to_schedule = Vec::new();
         {
             let mut guard = self.inner.lock().await;
-            let crate::crontask::state::InnerState { taskdetails, tasks } = &mut *guard;
+            let crate::core::state::InnerState { taskdetails, tasks } = &mut *guard;
             for taskdetail in taskdetails.iter_mut() {
                 let task = match tasks.get(&taskdetail.taskid) {
                     Some(task) => task,

@@ -6,7 +6,7 @@ use chrono::{NaiveDateTime, TimeDelta, Utc};
 use chrono_tz::Asia::Shanghai;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use crate::comm::error::CronTaskError;
+use crate::common::error::CronTaskError;
 
 pub type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 

@@ -1,6 +1,6 @@
-use crate::task::TaskDetail;
+use crate::task_engine::model::TaskDetail;
 use std::collections::HashMap;
-use crate::task::Task;
+use crate::task_engine::model::Task;
 
 pub struct InnerState {
     pub taskdetails: Vec<TaskDetail>,

@@ -9,19 +9,19 @@ use chrono_tz::Asia::Shanghai;
 static CRON_TASK_PTR: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
 /// 设置全局 CronTask 实例
-pub fn set_cron_task(task: &crate::crontask::core::CronTask) {
-    let ptr = task as *const crate::crontask::core::CronTask as *mut u8;
+pub fn set_cron_task(task: &crate::core::cron_task::CronTask) {
+    let ptr = task as *const crate::core::cron_task::CronTask as *mut u8;
     CRON_TASK_PTR.store(ptr, Ordering::Relaxed);
 }
 
 /// 获取全局 CronTask 实例
-fn get_cron_task() -> Option<&'static crate::crontask::core::CronTask> {
+fn get_cron_task() -> Option<&'static crate::core::cron_task::CronTask> {
     let ptr = CRON_TASK_PTR.load(Ordering::Relaxed);
     if ptr.is_null() {
         None
     } else {
         unsafe {
-            Some(&*(ptr as *const crate::crontask::core::CronTask))
+            Some(&*(ptr as *const crate::core::cron_task::CronTask))
         }
     }
 }
@@ -30,7 +30,7 @@ fn get_cron_task() -> Option<&'static crate::crontask::core::CronTask> {
 #[macro_export]
 macro_rules! trace_log {
     ($($arg:tt)*) => {
-        $crate::comm::log::log_message(log::Level::Trace, format!($($arg)*));
+        $crate::common::log::log_message(::log::Level::Trace, format!($($arg)*));
     };
 }
 
@@ -38,7 +38,7 @@ macro_rules! trace_log {
 #[macro_export]
 macro_rules! debug_log {
     ($($arg:tt)*) => {
-        $crate::comm::log::log_message(log::Level::Debug, format!($($arg)*));
+        $crate::common::log::log_message(::log::Level::Debug, format!($($arg)*));
     };
 }
 
@@ -46,7 +46,7 @@ macro_rules! debug_log {
 #[macro_export]
 macro_rules! info_log {
     ($($arg:tt)*) => {
-        $crate::comm::log::log_message(log::Level::Info, format!($($arg)*));
+        $crate::common::log::log_message(::log::Level::Info, format!($($arg)*));
     };
 }
 
@@ -54,7 +54,7 @@ macro_rules! info_log {
 #[macro_export]
 macro_rules! warn_log {
     ($($arg:tt)*) => {
-        $crate::comm::log::log_message(log::Level::Warn, format!($($arg)*));
+        $crate::common::log::log_message(::log::Level::Warn, format!($($arg)*));
     };
 }
 
@@ -62,12 +62,12 @@ macro_rules! warn_log {
 #[macro_export]
 macro_rules! error_log {
     ($($arg:tt)*) => {
-        $crate::comm::log::log_message(log::Level::Error, format!($($arg)*));
+        $crate::common::log::log_message(::log::Level::Error, format!($($arg)*));
     };
 }
 
 /// 实际处理日志消息的函数
-pub fn log_message(level: log::Level, message: String) {
+pub fn log_message(level: ::log::Level, message: String) {
     // 获取北京时间
     let utc_time: DateTime<Utc> = Utc::now();
     let beijing_time: DateTime<chrono_tz::Tz> = utc_time.with_timezone(&Shanghai);
@@ -85,7 +85,7 @@ pub fn log_message(level: log::Level, message: String) {
     // 尝试获取全局的 CRON_TASK 实例并发送日志消息
     if let Some(cron_task) = get_cron_task() {
         let _ = cron_task.message_bus.send(
-            crate::bus::message_bus::CronMessage::Log {
+            crate::message::message_bus::CronMessage::Log {
                 level,
                 message: message_with_thread,
             }

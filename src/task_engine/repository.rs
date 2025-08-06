@@ -1,13 +1,24 @@
+use crate::task_engine::model::Task;
+use dbcore::Database;
+use crate::common::error::CronTaskError;
 use std::collections::HashMap;
-use crate::task::Task;
+use std::sync::Arc;
 
-impl crate::crontask::core::CronTask {
+pub struct TaskRepository {
+    db: Arc<Database>,
+}
+
+impl TaskRepository {
+    pub fn new(db: Arc<Database>) -> Self {
+        Self { db }
+    }
+
     /// 从数据库中查询所有任务并构建成HashMap返回
     /// 
     /// # 返回值
     /// 成功时返回包含所有任务的HashMap，键为taskid，值为Task对象
     /// 失败时返回错误信息
-    pub async fn load_tasks_from_db(&self) -> Result<HashMap<i32, Task>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn load_all_tasks(&self) -> Result<HashMap<i32, Task>, CronTaskError> {
         let rs = self.db.open("select * from task where taskid >= ?").set_param(0).query(&self.db).await?;
         let mut tasks = HashMap::new();
 
@@ -31,12 +42,9 @@ impl crate::crontask::core::CronTask {
         Ok(tasks)
     }
     
-    /// 从内部状态中获取所有任务的副本
-    /// 
-    /// # 返回值
-    /// 返回包含所有任务的HashMap，键为taskid，值为Task对象
-    pub async fn get_all_tasks_from_cache(&self) -> HashMap<i32, Task> {
-        let guard = self.inner.lock().await;
-        guard.tasks.clone()
+    /// 初始化表结构
+    pub async fn init_table(&self) -> Result<(), CronTaskError> {
+        Task::init(&*self.db).await?;
+        Ok(())
     }
 }
