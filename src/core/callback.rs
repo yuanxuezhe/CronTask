@@ -163,17 +163,6 @@ impl CronTask {
         Ok(())
     }
     
-    /// 更新任务详情状态并持久化
-    async fn update_task_detail_status(&self, task_key: &str, status: i32) -> Result<(), String> {
-        let mut guard = self.inner.lock().await;
-        if let Some(detail) = guard.taskdetails
-            .iter_mut()
-            .find(|d| gen_task_key(d.taskid, &d.timepoint) == task_key) {
-            detail.status = status;
-        }
-        Ok(())
-    }
-
     /// 持久化更新任务详情
     async fn update_task_detail(&self, taskdetail: TaskDetail) -> Result<(), String> {
         let mut guard = self.inner.lock().await;
@@ -183,5 +172,21 @@ impl CronTask {
             *detail = taskdetail;
         }
         Ok(())
+    }
+    
+    /// 根据任务描述和当前触发次数构建任务消息
+    /// 
+    /// # 参数
+    /// * `description` - 任务描述
+    /// * `current_trigger_count` - 当前触发次数
+    /// 
+    /// # 返回值
+    /// 返回构建好的任务消息字符串
+    pub(crate) fn build_task_message(&self, description: String, current_trigger_count: i32) -> String {
+        if current_trigger_count == 0 {
+            description
+        } else {
+            format!("{}（重复提醒第{}次）", description, current_trigger_count)
+        }
     }
 }

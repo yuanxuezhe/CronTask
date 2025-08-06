@@ -12,7 +12,6 @@ use crate::core::state::InnerState;
 use crate::message::message_bus::{CronMessage, MessageBus};
 use crate::message::time_bus::TimeBus;
 use crate::scheduler::task_scheduler::TaskScheduler;
-use crate::task_engine::model::TaskDetail;
 
 // 外部 crate 使用声明
 use dbcore::Database;
@@ -167,34 +166,6 @@ impl CronTask {
         }
     }
     
-    /// 获取活跃任务数量
-    /// 
-    /// # 返回值
-    /// 返回当前监控中的任务数量
-    pub async fn active_task_count(&self) -> usize {
-        let guard = self.inner.lock().await;
-        guard.taskdetails
-            .iter()
-            .filter(|detail| detail.status == crate::common::consts::TASK_STATUS_MONITORING)
-            .count()
-    }
-    
-    /// 获取所有任务详情
-    /// 
-    /// # 返回值
-    /// 返回所有任务详情的副本
-    pub async fn get_task_details(&self) -> Vec<TaskDetail> {
-        let guard = self.inner.lock().await;
-        guard.taskdetails.clone()
-    }
-    
-    /// 清空所有任务
-    pub async fn clear_all_tasks(&self) {
-        let mut guard = self.inner.lock().await;
-        guard.taskdetails.clear();
-        guard.tasks.clear();
-        crate::info_log!("所有任务已清空");
-    }
 }
 
 // 私有辅助函数实现

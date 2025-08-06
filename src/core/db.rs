@@ -35,13 +35,4 @@ impl CronTask {
         }
         Ok(tasks)
     }
-    
-    /// 从内部状态中获取所有任务的副本
-    /// 
-    /// # 返回值
-    /// 返回包含所有任务的HashMap，键为taskid，值为Task对象
-    pub async fn get_all_tasks_from_cache(&self) -> HashMap<i32, Task> {
-        let guard = self.inner.lock().await;
-        guard.tasks.clone()
-    }
 }

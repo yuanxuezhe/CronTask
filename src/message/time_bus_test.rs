@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::bus::time_bus::TimeBus;
+    use crate::message::time_bus::TimeBus;
     use std::sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -20,35 +20,21 @@ mod tests {
         let second_count_clone = second_callback_count.clone();
         let minute_count_clone = minute_callback_count.clone();
 
-        // // 注册毫秒回调
-        // time_bus
-        //     .register_callback(1, move |pulse| {
-        //         let count = millisecond_count_clone.fetch_add(1, Ordering::Relaxed) + 1;
-        //         let timestamp = pulse.timestamp.timestamp_millis();
-        //         println!(
-        //             "[{}] 毫秒回调 #{}: 时间戳 = {}",
-        //             pulse.timestamp.format("%Y-%m-%d %H:%M:%S%.3f"),
-        //             count,
-        //             timestamp
-        //         );
-        //     })
-        //     .await;
+        // 注册毫秒回调
+        time_bus
+            .register_callback(1, move |_pulse| {
+                millisecond_count_clone.fetch_add(1, Ordering::Relaxed);
+            })
+            .await;
 
-        // // 注册秒回调
-        // time_bus
-        //     .register_callback(2, move |pulse| {
-        //         let count = second_count_clone.fetch_add(1, Ordering::Relaxed) + 1;
-        //         let timestamp = pulse.timestamp.timestamp();
-        //         println!(
-        //             "[{}] 秒回调 #{}: 时间戳 = {}",
-        //             pulse.timestamp.format("%Y-%m-%d %H:%M:%S"),
-        //             count,
-        //             timestamp
-        //         );
-        //     })
-        //     .await;
+        // 注册秒回调
+        time_bus
+            .register_callback(2, move |_pulse| {
+                second_count_clone.fetch_add(1, Ordering::Relaxed);
+            })
+            .await;
 
-        // 注册分钟回调
+        // 注册分钟回调 (组合信号：毫秒|秒 = 1|2 = 3)
         time_bus
             .register_callback(3, move |pulse| {
                 let count = minute_count_clone.fetch_add(1, Ordering::Relaxed) + 1;
@@ -109,7 +95,7 @@ mod tests {
             })
             .await;
 
-        // 注册同时订阅毫秒和秒的组合回调
+        // 注册同时订阅毫秒和秒的组合回调 (组合信号：毫秒|秒 = 1|2 = 3)
         time_bus
             .register_callback(3, move |_pulse| {
                 combined_count_clone.fetch_add(1, Ordering::Relaxed);

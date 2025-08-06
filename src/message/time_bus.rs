@@ -158,7 +158,7 @@ impl TimeBus {
             signal_type |= 0b010000;
         }
         
-        // 周信号
+        // 周信号（ISO周）
         let week = now.iso_week().week() as i64;
         if week != *last_week {
             *last_week = week;
@@ -172,20 +172,11 @@ impl TimeBus {
     async fn execute_callbacks(&self, pulse: TimePulse) {
         let callbacks = self.callbacks.read().await;
         
-        // 执行精确匹配的回调
-        if let Some(callbacks_for_type) = callbacks.get(&pulse.signal_type) {
-            for callback in callbacks_for_type {
-                let pulse_clone = pulse.clone();
-                callback(pulse_clone);
-            }
-        }
-        
-        // 执行组合信号的回调（例如同时订阅了毫秒和秒的回调）
+        // 执行所有匹配的回调（精确匹配或位掩码匹配）
         for (registered_type, callbacks_for_type) in callbacks.iter() {
             if pulse.signal_type & *registered_type == *registered_type {
                 for callback in callbacks_for_type {
-                    let pulse_clone = pulse.clone();
-                    callback(pulse_clone);
+                    callback(pulse.clone());
                 }
             }
         }
@@ -199,15 +190,7 @@ fn start_time_generator(time_bus: Arc<TimeBus>) {
     });
 }
 
-// 为TimeBus实现Clone特性
-impl Clone for TimeBus {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-            callbacks: self.callbacks.clone(),
-        }
-    }
-}
+// 移除了Clone实现，使用Arc<TimeBus>替代
 
 #[cfg(test)]
 mod tests {

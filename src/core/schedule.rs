@@ -101,73 +101,10 @@ impl CronTask {
         self.clone().reschedule_all().await;
     }
     
-    /// 将任务添加到时间轮中进行调度
-    /// 
-    /// # 参数
-    /// * `timestamp` - 任务触发时间（NaiveDateTime类型）
-    /// * `millis` - 延迟毫秒数
-    /// * `key` - 任务唯一标识符
-    /// * `arg` - 任务参数（字符串类型）
-    /// 
-    /// # 返回值
-    /// 成功时返回任务 key，失败时返回错误信息（Result<String, String> 类型）
-    pub async fn schedule(
-        self: &Arc<Self>,
-        timestamp: NaiveDateTime, 
-        millis: u64, 
-        key: String,
-        arg: String, 
-    ) -> Result<(), String> {
-        crate::info_log!("crontask::schedule 发送调度消息: {} at {} + {}ms", key, timestamp, millis);
-        self.message_bus.send(CronMessage::ScheduleTask {
-            timestamp,
-            delay_ms: millis,
-            key,
-            arg,
-        }).map_err(|e| e.to_string())
-    }
-    
-    /// 从时间轮中移除指定任务
-    /// 
-    /// # 参数
-    /// * `timestamp` - 任务原定触发时间（NaiveDateTime 类型）
-    /// * `millis` - 原定延迟毫秒数
-    /// * `key` - 任务唯一标识符
-    /// 
-    /// # 返回值
-    /// 成功时返回操作结果信息，失败时返回错误信息（Result<String, String> 类型）
-    pub async fn cancel(
-        self: &Arc<Self>,
-        timestamp: NaiveDateTime, 
-        millis: u64, 
-        key: String,
-    ) -> Result<(), String> {
-        crate::info_log!("crontask::cancel 发送取消消息: {} at {} + {}ms", key, timestamp, millis);
-        self.message_bus.send(CronMessage::CancelTask {
-            timestamp,
-            delay_ms: millis,
-            key,
-        }).map_err(|e| e.to_string())
-    }
 }
 
 // 私有辅助方法实现
 impl CronTask {
-    /// 根据任务描述和当前触发次数构建任务消息
-    /// 
-    /// # 参数
-    /// * `description` - 任务描述
-    /// * `current_trigger_count` - 当前触发次数
-    /// 
-    /// # 返回值
-    /// 返回构建好的任务消息字符串
-    pub fn build_task_message(&self, description: String, current_trigger_count: i32) -> String {
-        if current_trigger_count == 0 {
-            description
-        } else {
-            format!("{}（重复提醒第{}次）", description, current_trigger_count)
-        }
-    }
     
     /// 取消任务
     async fn cancel_tasks(&self, to_cancel: Vec<(NaiveDateTime, u64, String)>) {
