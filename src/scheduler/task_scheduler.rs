@@ -1,14 +1,19 @@
-use tokio::sync::mpsc;
+use std::sync::Arc;
+
+// 外部 crate 导入
 use chrono::NaiveDateTime;
 use std::time::Duration;
-use tokio::sync::oneshot;
-use crate::scheduler::request::TaskRequest;
-use std::sync::Arc;
-use crate::scheduler::time_wheel::TimeWheel;
-use crate::common::error::CronTaskError;
+use tokio::sync::{mpsc, oneshot};
 
+// 内部模块导入
+use crate::common::error::CronTaskError;
+use crate::scheduler::request::TaskRequest;
+use crate::scheduler::time_wheel::TimeWheel;
+
+/// 通道缓冲区大小
 const CHANNEL_BUFFER_SIZE: usize = 1000;
 
+/// 任务调度器
 pub struct TaskScheduler {
     /// 任务请求发送通道
     pub sender: mpsc::Sender<TaskRequest>,
@@ -29,39 +34,16 @@ impl TaskScheduler {
         let (sender, receiver) = mpsc::channel::<TaskRequest>(CHANNEL_BUFFER_SIZE);
         let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
         let tw_clone: Arc<TimeWheel> = Arc::clone(&time_wheel);
-        tokio::spawn(async move {
-            Self::process_requests(receiver, tw_clone).await;
-        });
         
-        // 不再在这里启动时间轮，而是通过时间总线回调方式驱动
-        // 时间轮会在CronTask中通过时间总线的回调来驱动
-
+        // 启动请求处理器
+        start_request_processor(receiver, tw_clone);
+        
         Self { 
             sender,
             time_wheel,
         }
     }
     
-    /// 处理来自通道的任务添加和取消请求
-    /// 
-    /// # 参数
-    /// * `receiver` - 任务请求接收通道
-    /// * `time_wheel` - 时间轮实例
-    async fn process_requests(mut receiver: mpsc::Receiver<TaskRequest>, time_wheel: Arc<TimeWheel>) {
-        while let Some(request) = receiver.recv().await {
-            match request {
-                TaskRequest::Add { time, interval, key, arg, task, resp } => {
-                    let result = time_wheel.add_task(time, interval, key, arg, task).await;
-                    let _ = resp.send(result);
-                }
-                TaskRequest::Cancel { time, interval, key, resp } => {
-                    let result = time_wheel.del_task(time, interval, key).await;
-                    let _ = resp.send(result);
-                }
-            }
-        }
-    }
-
     /// 将任务添加到时间轮中进行调度
     /// 
     /// # 参数
@@ -132,4 +114,34 @@ impl TaskScheduler {
     pub fn time_wheel(&self) -> Arc<TimeWheel> {
         self.time_wheel.clone()
     }
+}
+
+// 私有辅助函数实现
+impl TaskScheduler {
+    /// 处理来自通道的任务添加和取消请求
+    /// 
+    /// # 参数
+    /// * `receiver` - 任务请求接收通道
+    /// * `time_wheel` - 时间轮实例
+    async fn process_requests(mut receiver: mpsc::Receiver<TaskRequest>, time_wheel: Arc<TimeWheel>) {
+        while let Some(request) = receiver.recv().await {
+            match request {
+                TaskRequest::Add { time, interval, key, arg, task, resp } => {
+                    let result = time_wheel.add_task(time, interval, key, arg, task).await;
+                    let _ = resp.send(result);
+                }
+                TaskRequest::Cancel { time, interval, key, resp } => {
+                    let result = time_wheel.del_task(time, interval, key).await;
+                    let _ = resp.send(result);
+                }
+            }
+        }
+    }
+}
+
+// 私有辅助函数
+fn start_request_processor(receiver: mpsc::Receiver<TaskRequest>, time_wheel: Arc<TimeWheel>) {
+    tokio::spawn(async move {
+        TaskScheduler::process_requests(receiver, time_wheel).await;
+    });
 }

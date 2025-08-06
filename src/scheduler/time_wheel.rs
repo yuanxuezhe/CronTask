@@ -1,25 +1,33 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+// 标准库导入
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+// 外部 crate 导入
 use arc_swap::ArcSwap;
 use hashbrown::HashMap;
 use chrono::{NaiveDateTime, TimeDelta, Utc};
 use chrono_tz::Asia::Shanghai;
 use std::time::Duration;
 use tokio::sync::Mutex;
+
+// 内部模块导入
 use crate::common::error::CronTaskError;
 
+/// 任务类型定义
 pub type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
 
+/// 时间轮槽位
 pub struct TimeWheelSlot {
     /// 存储任务的HashMap，键为任务key，值为任务函数和参数
     pub tasks: Mutex<HashMap<String, (Task, String)>>,
 }
 
+/// 时间轮
 pub struct TimeWheel {
     /// 时间轮槽位数组
     pub slots: Vec<ArcSwap<TimeWheelSlot>>,
     /// 当前槽位索引
-    pub current_slot: Arc<AtomicUsize>,
+    pub current_slot: Arc<std::sync::atomic::AtomicUsize>,
     /// 滴答间隔
     pub tick_duration: Duration,
     /// 总槽数
@@ -45,9 +53,10 @@ impl TimeWheel {
                 }))
             })
             .collect();
+            
         Self {
             slots,
-            current_slot: Arc::new(AtomicUsize::new(0)),
+            current_slot: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             tick_duration,
             total_slots,
             base_time: Utc::now().with_timezone(&Shanghai).naive_local(),
@@ -101,28 +110,15 @@ impl TimeWheel {
             .map_err(|e| CronTaskError::TimeConversionFailed(format!("时间转换失败: {}", e)))?;
         let target_time = timestamp.checked_add_signed(delta)
             .ok_or(CronTaskError::TimeOverflow)?;
+            
         let current_slot = self.get_real_slot(now)?;
         let target_slot = self.get_real_slot(target_time)?;
-        if target_time < now {
-            return Err(CronTaskError::TaskPastDue);
-        }
-        if target_slot <= current_slot {
-            return Err(CronTaskError::TaskPastDue);
-        }
-        if target_slot - current_slot >= self.total_slots {
-            return Err(CronTaskError::TaskTooFarInFuture);
-        }
+        
+        // 检查时间有效性
+        self.validate_task_time(target_time, now, current_slot, target_slot)?;
         
         // 添加任务
-        let slot = self.slots[target_slot % self.total_slots].load();
-        let mut tasks = slot.tasks.lock().await;
-        
-        if tasks.contains_key(&key) {
-            return Err(CronTaskError::TaskAlreadyExists);
-        }
-        
-        tasks.insert(key.clone(), (task, arg));
-        Ok(key)
+        self.insert_task(target_slot, key, task, arg).await
     }
     
     /// 从时间轮中删除任务
@@ -157,13 +153,7 @@ impl TimeWheel {
         }
         
         // 删除任务
-        let slot = self.slots[target_slot % self.total_slots].load();
-        let mut tasks = slot.tasks.lock().await;
-        
-        match tasks.remove(&key) {
-            Some(_) => Ok("任务已取消".to_string()),
-            None => Ok("任务不存在,无需取消".to_string()),
-        }
+        self.remove_task(target_slot, key).await
     }
     
     /// 使用时间总线的秒信号驱动时间轮运行
@@ -182,7 +172,59 @@ impl TimeWheel {
             Ordering::Release
         );
     }
+}
 
+// 私有辅助方法实现
+impl TimeWheel {
+    /// 验证任务时间有效性
+    fn validate_task_time(
+        &self, 
+        target_time: NaiveDateTime, 
+        now: NaiveDateTime, 
+        current_slot: usize, 
+        target_slot: usize
+    ) -> Result<(), CronTaskError> {
+        if target_time < now {
+            return Err(CronTaskError::TaskPastDue);
+        }
+        
+        if target_slot <= current_slot {
+            return Err(CronTaskError::TaskPastDue);
+        }
+        
+        if target_slot - current_slot >= self.total_slots {
+            return Err(CronTaskError::TaskTooFarInFuture);
+        }
+        
+        Ok(())
+    }
+    
+    /// 插入任务到指定槽位
+    async fn insert_task(&self, target_slot: usize, key: String, task: Task, arg: String) -> Result<String, CronTaskError> {
+        let slot_index = target_slot % self.total_slots;
+        let slot = self.slots[slot_index].load();
+        let mut tasks = slot.tasks.lock().await;
+        
+        if tasks.contains_key(&key) {
+            return Err(CronTaskError::TaskAlreadyExists);
+        }
+        
+        tasks.insert(key.clone(), (task, arg));
+        Ok(key)
+    }
+    
+    /// 从指定槽位删除任务
+    async fn remove_task(&self, target_slot: usize, key: String) -> Result<String, CronTaskError> {
+        let slot_index = target_slot % self.total_slots;
+        let slot = self.slots[slot_index].load();
+        let mut tasks = slot.tasks.lock().await;
+        
+        match tasks.remove(&key) {
+            Some(_) => Ok("任务已取消".to_string()),
+            None => Ok("任务不存在,无需取消".to_string()),
+        }
+    }
+    
     /// 执行当前槽位中的所有任务并调用回调函数
     pub async fn process_current_slot_with_callback<F, Fut>(&self, on_tick: &F) 
     where 

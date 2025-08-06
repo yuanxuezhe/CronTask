@@ -21,3 +21,4 @@ once_cell = "1.18.0"
 dbcore = { path = "../dbcore" }
 macros = { path = "../macros" }
 sqlx = "0.8.3"
+futures = "0.3.30"

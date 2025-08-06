@@ -1,8 +1,9 @@
-use std::sync::Arc;
-use std::time::Duration;
+// 标准库导入
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use chrono::{DateTime, Utc, Datelike};
+// 外部 crate 导入
+use chrono::{DateTime, Datelike, Utc};
 use chrono_tz::Asia::Shanghai;
 use tokio::sync::{broadcast, RwLock};
 
@@ -42,10 +43,7 @@ impl TimeBus {
         });
         
         // 启动时间脉冲生成器
-        let time_bus_clone = time_bus.clone();
-        tokio::spawn(async move {
-            time_bus_clone.run_time_generator().await;
-        });
+        start_time_generator(time_bus.clone());
         
         time_bus
     }
@@ -77,10 +75,13 @@ impl TimeBus {
     pub fn now() -> DateTime<chrono_tz::Tz> {
         Utc::now().with_timezone(&Shanghai)
     }
-    
+}
+
+// 私有辅助函数实现
+impl TimeBus {
     /// 运行时间脉冲生成器
     async fn run_time_generator(self: Arc<Self>) {
-        let mut interval = tokio::time::interval(Duration::from_millis(1)); // 1ms精度
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(1)); // 1ms精度
         let mut last_second = 0;
         let mut last_minute = 0;
         let mut last_hour = 0;
@@ -191,6 +192,13 @@ impl TimeBus {
     }
 }
 
+// 私有辅助函数
+fn start_time_generator(time_bus: Arc<TimeBus>) {
+    tokio::spawn(async move {
+        time_bus.run_time_generator().await;
+    });
+}
+
 // 为TimeBus实现Clone特性
 impl Clone for TimeBus {
     fn clone(&self) -> Self {
@@ -281,18 +289,18 @@ mod tests {
     #[tokio::test]
     async fn test_callback_registration() {
         let time_bus = TimeBus::new();
-        let callback_flag = Arc::new(AtomicBool::new(false));
+        let callback_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let callback_flag_clone = callback_flag.clone();
         
         // 注册一个回调函数
         time_bus.register_callback(2, move |_pulse| {
-            callback_flag_clone.store(true, Ordering::Relaxed);
+            callback_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
         }).await;
         
         // 等待足够时间让回调有机会执行多次
         tokio::time::sleep(Duration::from_millis(100)).await;
         
         // 验证回调函数至少被调用过一次
-        assert!(callback_flag.load(Ordering::Relaxed));
+        assert!(callback_flag.load(std::sync::atomic::Ordering::Relaxed));
     }
 }
