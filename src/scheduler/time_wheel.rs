@@ -130,6 +130,15 @@ impl TimeWheel {
         
         // 如果任务时间已过时
         if target_time < now {
+            // 即使时间已过，也要尝试从时间轮中删除任务
+            if let Ok(target_slot) = self.get_real_slot(target_time) {
+                let slot_index = target_slot % self.total_slots;
+                let slot = self.slots[slot_index].load();
+                let mut tasks = slot.tasks.lock().await;
+                if tasks.remove(&key).is_some() {
+                    return Ok("任务已取消".to_string());
+                }
+            }
             return Ok("任务时间已过时,无需取消".to_string());
         }
         
@@ -138,6 +147,13 @@ impl TimeWheel {
         let target_slot = self.get_real_slot(target_time)?;
         
         if target_slot <= current_slot || target_slot - current_slot >= self.total_slots {
+            // 即使超出范围，也要尝试删除任务
+            let slot_index = target_slot % self.total_slots;
+            let slot = self.slots[slot_index].load();
+            let mut tasks = slot.tasks.lock().await;
+            if tasks.remove(&key).is_some() {
+                return Ok("任务已取消".to_string());
+            }
             return Ok("任务时间已过时或超出范围,无需取消".to_string());
         }
         

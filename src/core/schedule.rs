@@ -48,7 +48,7 @@ impl CronTask {
                 // 处理需要删除的任务
                 if taskdetail.tag == TASK_TAG_DELETE {
                     if taskdetail.status == TASK_STATUS_MONITORING {
-                        to_cancel.push((ndt, delay_ms, task_key));
+                        to_cancel.push((ndt, delay_ms, task_key, taskdetail.taskid));
                     }
                     continue;
                 }
@@ -107,14 +107,26 @@ impl CronTask {
 impl CronTask {
     
     /// 取消任务
-    async fn cancel_tasks(&self, to_cancel: Vec<(NaiveDateTime, u64, String)>) {
-        for (ndt, delay_ms, task_key) in to_cancel {
+    async fn cancel_tasks(&self, to_cancel: Vec<(NaiveDateTime, u64, String, i32)>) {
+        for (ndt, delay_ms, task_key, task_id) in to_cancel {
+            // 发送取消消息
             let _ = self.message_bus.send(CronMessage::CancelTask {
                 timestamp: ndt,
                 delay_ms,
                 key: task_key.clone(),
             });
             crate::info_log!("发送任务取消消息: {}", task_key);
+            
+            // 更新内部状态为未监控状态
+            {
+                let mut guard = self.inner.lock().await;
+                if let Some(detail) = guard.taskdetails
+                    .iter_mut()
+                    .find(|d| d.taskid == task_id && gen_task_key(d.taskid, &d.timepoint) == task_key) {
+                    detail.status = TASK_STATUS_UNMONITORED;
+                    crate::info_log!("更新任务 {} 状态为未监控", task_key);
+                }
+            }
         }
     }
     

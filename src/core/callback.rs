@@ -132,6 +132,8 @@ impl CronTask {
         crate::info_log!("任务 {} 达到最大重试次数，停止调度", task.taskname);
         taskdetail.status = TASK_STATUS_UNMONITORED;
         self.update_task_detail(taskdetail.clone()).await?;
+        // 更新数据库中的状态
+        self.update_task_status_in_db(task.taskid, &taskdetail.timepoint, taskdetail.status).await?;
         Ok(())
     }
     
@@ -157,6 +159,7 @@ impl CronTask {
             Err(e) => {
                 taskdetail.status = TASK_STATUS_UNMONITORED;
                 self.update_task_detail(taskdetail.clone()).await?;
+                self.update_task_status_in_db(taskdetail.taskid, &taskdetail.timepoint, taskdetail.status).await?;
                 return Err(format!("任务重试调度失败: {} - {}", task_key, e));
             },
         }
@@ -171,6 +174,17 @@ impl CronTask {
             .find(|d| gen_task_key(d.taskid, &d.timepoint) == gen_task_key(taskdetail.taskid, &taskdetail.timepoint)) {
             *detail = taskdetail;
         }
+        Ok(())
+    }
+    
+    /// 更新数据库中的任务状态
+    async fn update_task_status_in_db(&self, task_id: i32, timepoint: &str, status: i32) -> Result<(), String> {
+        // 在这里实现更新数据库中任务状态的逻辑
+        // 由于TaskDetail没有独立的表，我们可以考虑在task表中添加额外的字段
+        // 或者创建一个task_status表来跟踪每个任务在特定时间点的状态
+        // 当前实现中，我们只是记录日志表明需要更新状态
+        crate::info_log!("需要更新任务(taskid={}, timepoint={})的状态为: {}", task_id, timepoint, status);
+        // 实际的数据库更新操作应该在这里实现
         Ok(())
     }
     
