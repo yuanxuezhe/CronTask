@@ -71,13 +71,18 @@ impl TimeWheel {
     /// # 返回值
     /// 返回时间对应的绝对槽位索引
     pub fn get_real_slot(&self, timestamp: NaiveDateTime) -> Result<usize, CronTaskError> {
+        if timestamp < self.base_time {
+            return Err(CronTaskError::TaskPastDue);
+        }
+        
         let duration = timestamp - self.base_time;
         let nanos = match duration.num_nanoseconds() {
-            Some(nanos) if nanos >= 0 => nanos as u64,
-            _ => return Err(CronTaskError::TaskPastDue),
+            Some(nanos) => nanos as u64,
+            None => return Err(CronTaskError::TimeCalculationError),
         };
+        
         let tick_index = nanos / self.tick_duration.as_nanos() as u64;
-        Ok(tick_index as usize)
+        Ok((tick_index as usize) % self.total_slots)
     }
     
     /// 添加任务到时间轮
@@ -100,9 +105,11 @@ impl TimeWheel {
         let target_time = timestamp.checked_add_signed(delta)
             .ok_or(CronTaskError::TimeOverflow)?;
             
-        let current_slot = self.get_real_slot(now)?;
+        // 使用存储的当前槽位而不是实时计算
+        let current_slot = self.current_slot.load(Ordering::Relaxed); 
         let target_slot = self.get_real_slot(target_time)?;
-        
+        // 打印当前槽位和目标槽位
+        println!("当前槽位: {}, 目标槽位: {}", current_slot, target_slot);
         // 检查时间有效性
         self.validate_task_time(target_time, now, current_slot, target_slot)?;
         
@@ -142,8 +149,8 @@ impl TimeWheel {
             return Ok("任务时间已过时,无需取消".to_string());
         }
         
-        // 获取槽位
-        let current_slot = self.get_real_slot(now)?;
+        // 使用存储的当前槽位而不是实时计算
+        let current_slot = self.current_slot.load(Ordering::Relaxed);
         let target_slot = self.get_real_slot(target_time)?;
         
         if target_slot <= current_slot || target_slot - current_slot >= self.total_slots {
@@ -167,15 +174,15 @@ impl TimeWheel {
         F: Fn(NaiveDateTime) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ()> + Send,
     {
-        // 执行一次任务处理
-        self.process_current_slot_with_callback(&on_tick).await;
-        
-        // 更新当前槽位
-        let current = self.current_slot.load(Ordering::Relaxed);
-        self.current_slot.store(
-            (current + 1) % self.total_slots,
-            Ordering::Release
-        );
+        // 基于实际时间计算当前槽位，而不是简单地递增
+        let now = Utc::now().with_timezone(&Shanghai).naive_local();
+        if let Ok(current_slot) = self.get_real_slot(now) {
+            // 原子更新当前槽位
+            self.current_slot.store(current_slot, Ordering::Release);
+            
+            // 执行任务处理
+            self.process_current_slot_with_callback(&on_tick).await;
+        }
     }
 }
 
@@ -189,15 +196,22 @@ impl TimeWheel {
         current_slot: usize, 
         target_slot: usize
     ) -> Result<(), CronTaskError> {
-        if target_time < now {
+        // 允许少量时间差，考虑到系统调度可能存在的微小延迟
+        let time_diff = target_time - now;
+        if time_diff < TimeDelta::milliseconds(-100) {
             return Err(CronTaskError::TaskPastDue);
         }
         
-        if target_slot <= current_slot {
-            return Err(CronTaskError::TaskPastDue);
-        }
+        // 检查目标槽位是否在有效范围内
+        // 由于时间轮是循环的，我们需要考虑跨越边界的情况
+        let slot_diff = if target_slot >= current_slot {
+            target_slot - current_slot
+        } else {
+            // 跨越边界的情况
+            (self.total_slots - current_slot) + target_slot
+        };
         
-        if target_slot - current_slot >= self.total_slots {
+        if slot_diff >= self.total_slots {
             return Err(CronTaskError::TaskTooFarInFuture);
         }
         
@@ -239,11 +253,8 @@ impl TimeWheel {
         let current = self.current_slot.load(Ordering::Relaxed);
         let slot = self.slots[current].load();
         
-        // 计算当前时间
-        let elapsed_ticks = current;
-        let elapsed_nanos = (elapsed_ticks as u128) * self.tick_duration.as_nanos();
-        let current_time = self.base_time + 
-            TimeDelta::nanoseconds(elapsed_nanos as i64);
+        // 使用实时时间而不是基于tick计数的时间
+        let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
 
         // 触发滴答事件回调
         on_tick(current_time).await;
