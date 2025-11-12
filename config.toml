@@ -5,8 +5,8 @@ path = "evdata.db"
 
 [scheduler]
 tick_interval_ms = 1000
-total_slots = 60
+total_slots = 3600
 
 [cron]
 reload_interval_ms = 10000
-max_schedule_days = 10
+max_schedule_days = 1
