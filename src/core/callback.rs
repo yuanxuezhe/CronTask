@@ -44,32 +44,33 @@ impl CronTask {
         if key == RELOAD_TASK_NAME {
             return self.handle_reload_task(key, eventdata).await;
         }
-        
+
         // 解析任务键
         let (task_id, time_point) = self.parse_task_key(&key)?;
-        
+
         // 获取任务信息
         let task = self.get_task_by_id(task_id).await?;
-        
+
         // 获取任务详情
         let task_key = gen_task_key(task_id, &time_point.to_string());
         let mut taskdetail = self.get_task_detail(&task_key).await?;
-        
+
         // 检查重试次数
         if taskdetail.current_trigger_count >= task.retry_count {
             return self.handle_max_retries_reached(&task, &mut taskdetail).await;
         }
-        
+
         // 增加重试计数并构建消息
         taskdetail.current_trigger_count += 1;
         let message = self.build_task_message(task.discribe, taskdetail.current_trigger_count);
         let delay_ms = (task.retry_interval * taskdetail.current_trigger_count) as u64;
-        
+
         // 调度重试任务
         self.schedule_retry_task(time_point, delay_ms, task_key, message, &mut taskdetail).await?;
-        
+
         // 更新任务详情
         self.update_task_detail(taskdetail).await?;
+ 
         Ok(())
     }
 }

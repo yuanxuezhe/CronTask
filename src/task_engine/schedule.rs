@@ -1,19 +1,22 @@
-use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Utc, Datelike};
+use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Utc, Datelike, TimeDelta};
 use chrono_tz::Asia::Shanghai;
 //use crate::task::model::Task;
 use crate::task_engine::holiday::{is_holiday, is_weekend, parse_date};
 use crate::common::consts::*;
 
 impl crate::task_engine::model::Task {
-    /// 根据任务的调度规则计算接下来指定天数内的所有调度时间点
+    /// 根据任务的调度规则计算指定时间范围内的所有调度时间点列表
     /// 
     /// # 参数
-    /// * `maxdays` - 最大天数
+    /// * `max_future_time` - 最大未来时间
     /// 
     /// # 返回值
-    /// 返回未来指定天数内的所有调度时间点列表
-    pub fn next_n_schedules(&self, maxdays: u32) -> Vec<NaiveDateTime> {
+    /// 返回指定时间范围内的所有调度时间点列表
+    pub fn get_schedules_in_range(&self, max_future_time: NaiveDateTime) -> Vec<NaiveDateTime> {
         let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
+        
+        let max_days = (max_future_time - current_time).num_days() as u32 + 1;
+        
         let time_points: Vec<NaiveTime> = self.time_point
             .split(',')
             .filter_map(|s| NaiveTime::parse_from_str(s.trim(), TIME_FORMAT).ok())
@@ -21,13 +24,13 @@ impl crate::task_engine::model::Task {
         if time_points.is_empty() {
             return vec![];
         }
-        let candidates = self.generate_candidate_dates(current_time.date(), maxdays)
+        let candidates = self.generate_candidate_dates(current_time.date(), max_days)
             .unwrap_or_default();
         let mut result = Vec::with_capacity(candidates.len() * time_points.len());
         for date in candidates {
             for &tp in &time_points {
                 let datetime = date.and_time(tp);
-                if datetime > current_time {
+                if datetime > current_time && datetime <= max_future_time {
                     result.push(datetime);
                 }
             }

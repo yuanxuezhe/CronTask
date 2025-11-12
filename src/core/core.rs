@@ -142,7 +142,7 @@ impl CronTask {
     
     /// 处理任务调度消息
     async fn handle_schedule_task(&self, timestamp: chrono::NaiveDateTime, delay_ms: u64, key: String, arg: String) {
-        info_log!("task[{}] add at {} + {}ms", key, timestamp, delay_ms);
+        info_log!("task[{}] add at {} + {}ms", key, timestamp.format("%Y-%m-%d %H:%M:%S%.3f"), delay_ms);
         let result = self.taskscheduler.schedule(
             timestamp,
             std::time::Duration::from_millis(delay_ms),
@@ -158,12 +158,20 @@ impl CronTask {
         
         if let Err(e) = result {
             error_log!("任务调度失败: {} - {}", key, e);
+            // 当任务调度失败时，更新任务状态为未监控，以便重新加载时可以重新尝试调度
+            let mut guard = self.inner.lock().await;
+            for detail in guard.taskdetails.iter_mut() {
+                if crate::common::utils::gen_task_key(detail.taskid, &detail.timepoint) == key {
+                    detail.status = crate::common::consts::TASK_STATUS_UNMONITORED;
+                    break;
+                }
+            }
         }
     }
     
     /// 处理任务取消消息
     async fn handle_cancel_task(&self, timestamp: chrono::NaiveDateTime, delay_ms: u64, key: String) {
-        info_log!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp, delay_ms);
+        info_log!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp.format("%Y-%m-%d %H:%M:%S%.3f"), delay_ms);
         let result = self.taskscheduler.cancel(
             timestamp,
             std::time::Duration::from_millis(delay_ms),

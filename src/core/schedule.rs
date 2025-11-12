@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 // 外部 crate 导入
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, TimeDelta, Utc};
+use chrono_tz::Asia::Shanghai;
 
 // 内部模块导入
 use crate::common::consts::*;
@@ -179,8 +180,18 @@ impl CronTask {
         let mut new_task_details = Vec::new();
         let mut new_keys = HashSet::new();
         
+        // 获取时间轮配置
+        let time_wheel = self.taskscheduler.time_wheel();
+        let tick_duration_secs = time_wheel.tick_duration.as_secs();
+        let total_slots = time_wheel.total_slots;
+        
+        // 计算时间轮能表示的最大未来时间
+        let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
+        let max_duration = tick_duration_secs * total_slots as u64;
+        let max_future_time = current_time + TimeDelta::seconds(max_duration as i64);
+
         for task in new_tasks.values() {
-            let timepoints = task.next_n_schedules(self.max_schedule_days);
+            let timepoints = task.get_schedules_in_range(max_future_time);
             if timepoints.is_empty() {
                 continue;
             }

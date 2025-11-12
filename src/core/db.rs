@@ -31,8 +31,10 @@ impl CronTask {
                 status: row_data.get("status")?,
                 discribe: row_data.get("discribe")?,
             };
+            
             tasks.insert(task.taskid, task);
         }
+        
         Ok(tasks)
     }
 }

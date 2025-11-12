@@ -1,6 +1,6 @@
 // 标准库导入
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // 外部 crate 导入
 use arc_swap::ArcSwap;
@@ -27,7 +27,7 @@ pub struct TimeWheel {
     /// 时间轮槽位数组
     pub slots: Vec<ArcSwap<TimeWheelSlot>>,
     /// 当前槽位索引
-    pub current_slot: Arc<std::sync::atomic::AtomicUsize>,
+    pub current_slot: Arc<AtomicUsize>,
     /// 滴答间隔
     pub tick_duration: Duration,
     /// 总槽数
@@ -56,7 +56,7 @@ impl TimeWheel {
             
         Self {
             slots,
-            current_slot: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            current_slot: Arc::new(AtomicUsize::new(0)),
             tick_duration,
             total_slots,
             base_time: Utc::now().with_timezone(&Shanghai).naive_local(),
@@ -82,7 +82,18 @@ impl TimeWheel {
         };
         
         let tick_index = nanos / self.tick_duration.as_nanos() as u64;
-        Ok((tick_index as usize) % self.total_slots)
+        Ok(tick_index as usize)
+    }
+    
+    /// 获取时间对应的槽位（取模后的结果）
+    /// 
+    /// # 参数
+    /// * `timestamp` - 时间戳
+    /// 
+    /// # 返回值
+    /// 返回时间对应的槽位索引
+    pub fn get_slot(&self, timestamp: NaiveDateTime) -> Result<usize, CronTaskError> {
+        Ok(self.get_real_slot(timestamp)? % self.total_slots)
     }
     
     /// 添加任务到时间轮
@@ -107,11 +118,11 @@ impl TimeWheel {
             
         // 使用存储的当前槽位而不是实时计算
         let current_slot = self.current_slot.load(Ordering::Relaxed); 
-        let target_slot = self.get_real_slot(target_time)?;
+        let target_slot = self.get_slot(target_time)?;
         // 打印当前槽位和目标槽位
-        println!("当前槽位: {}, 目标槽位: {}", current_slot, target_slot);
+        // println!("当前槽位: {}, 目标槽位: {}", current_slot, target_slot);
         // 检查时间有效性
-        self.validate_task_time(target_time, now, current_slot, target_slot)?;
+        self.validate_task_time(target_time, now)?;
         
         // 添加任务
         self.insert_task(target_slot, key, task, arg).await
@@ -138,7 +149,7 @@ impl TimeWheel {
         // 如果任务时间已过时
         if target_time < now {
             // 即使时间已过，也要尝试从时间轮中删除任务
-            if let Ok(target_slot) = self.get_real_slot(target_time) {
+            if let Ok(target_slot) = self.get_slot(target_time) {
                 let slot_index = target_slot % self.total_slots;
                 let slot = self.slots[slot_index].load();
                 let mut tasks = slot.tasks.lock().await;
@@ -151,7 +162,7 @@ impl TimeWheel {
         
         // 使用存储的当前槽位而不是实时计算
         let current_slot = self.current_slot.load(Ordering::Relaxed);
-        let target_slot = self.get_real_slot(target_time)?;
+        let target_slot = self.get_slot(target_time)?;
         
         if target_slot <= current_slot || target_slot - current_slot >= self.total_slots {
             // 即使超出范围，也要尝试删除任务
@@ -176,7 +187,7 @@ impl TimeWheel {
     {
         // 基于实际时间计算当前槽位，而不是简单地递增
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
-        if let Ok(current_slot) = self.get_real_slot(now) {
+        if let Ok(current_slot) = self.get_slot(now) {
             // 原子更新当前槽位
             self.current_slot.store(current_slot, Ordering::Release);
             
@@ -192,9 +203,7 @@ impl TimeWheel {
     fn validate_task_time(
         &self, 
         target_time: NaiveDateTime, 
-        now: NaiveDateTime, 
-        current_slot: usize, 
-        target_slot: usize
+        now: NaiveDateTime
     ) -> Result<(), CronTaskError> {
         // 允许少量时间差，考虑到系统调度可能存在的微小延迟
         let time_diff = target_time - now;
@@ -202,16 +211,21 @@ impl TimeWheel {
             return Err(CronTaskError::TaskPastDue);
         }
         
-        // 检查目标槽位是否在有效范围内
-        // 由于时间轮是循环的，我们需要考虑跨越边界的情况
-        let slot_diff = if target_slot >= current_slot {
-            target_slot - current_slot
-        } else {
-            // 跨越边界的情况
-            (self.total_slots - current_slot) + target_slot
+        // 获取真实的槽位索引，用于比较是否超出当前周期
+        let current_real_slot = match self.get_real_slot(now) {
+            Ok(slot) => slot,
+            Err(_) => 0, // 如果获取当前槽位失败，使用0作为默认值
         };
         
-        if slot_diff >= self.total_slots {
+        let target_real_slot = self.get_real_slot(target_time)?;
+        
+        // 检查目标槽位是否超出了时间轮的当前周期
+        // 只有当前一个总槽位周期内的时间点才能订阅
+        if target_real_slot < current_real_slot {
+            return Err(CronTaskError::TaskPastDue);
+        }
+        
+        if target_real_slot - current_real_slot >= self.total_slots {
             return Err(CronTaskError::TaskTooFarInFuture);
         }
         
