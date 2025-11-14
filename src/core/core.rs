@@ -11,14 +11,14 @@ use crate::scheduler::task_scheduler::TaskScheduler;
 use crate::core::state::InnerState;
 use crate::message::message_bus::{MessageBus, CronMessage};
 use crate::message::time_bus::TimeBus;
-use crate::common::consts::{RELOAD_TASK_NAME, TASK_STATUS_MONITORING};
+use crate::common::consts::RELOAD_TASK_NAME;
 use crate::task_engine::model::TaskDetail;
 
 // 外部 crate 使用声明
 use dbcore::Database;
 
 // 导入日志宏
-use crate::{info_log, error_log};
+use crate::info_log;
 
 /// 核心任务调度管理器
 pub struct CronTask {
@@ -28,8 +28,6 @@ pub struct CronTask {
     pub inner: Arc<Mutex<InnerState>>,
     /// 重新加载任务的时间间隔（毫秒）
     pub reload_interval: u64,
-    /// 最大调度天数
-    pub max_schedule_days: u32,
     /// 数据库连接
     pub db: Database,
     /// 消息总线
@@ -45,7 +43,6 @@ impl CronTask {
     /// * `reload_millis` - 重新加载任务的时间间隔（毫秒）
     /// * `tick_mills` - 时间轮滴答间隔（毫秒）
     /// * `total_slots` - 时间轮总槽数
-    /// * `max_schedule_days` - 最大调度天数
     /// * `db` - 数据库连接
     /// 
     /// # 返回值
@@ -54,7 +51,6 @@ impl CronTask {
         reload_millis: u64, 
         tick_mills: u64, 
         total_slots: usize, 
-        max_schedule_days: u32,
         db: Database
     ) -> Arc<Self> {
         let task_scheduler = Arc::new(TaskScheduler::new(
@@ -72,7 +68,6 @@ impl CronTask {
                 tasks: HashMap::new(),
             })),
             reload_interval: reload_millis,
-            max_schedule_days,
             db,
             message_bus: message_bus.clone(),
             time_bus: time_bus.clone(),
@@ -110,106 +105,7 @@ impl CronTask {
     
     /// 处理消息总线中的消息
     async fn handle_messages(self: &Arc<Self>) {
-        let mut receiver = self.message_bus.subscribe();
-        
-        while let Ok(message) = receiver.recv().await {
-            match message {
-                CronMessage::ScheduleTask { timestamp, delay_ms, key, arg } => {
-                    self.handle_schedule_task(timestamp, delay_ms, key, arg).await;
-                },
-                CronMessage::CancelTask { timestamp, delay_ms, key } => {
-                    self.handle_cancel_task(timestamp, delay_ms, key).await;
-                },
-                CronMessage::ReloadTasks => {
-                    self.reload_tasks().await;
-                },
-                CronMessage::ExecuteTask { key, eventdata } => {
-                    let _ = self.on_call_back_inner(key, eventdata).await;
-                },
-                CronMessage::Log { level, message } => {
-                    // 异步处理日志消息
-                    match level {
-                        ::log::Level::Error => ::log::error!("{}", message),
-                        ::log::Level::Warn => ::log::warn!("{}", message),
-                        ::log::Level::Info => ::log::info!("{}", message),
-                        ::log::Level::Debug => ::log::debug!("{}", message),
-                        ::log::Level::Trace => ::log::trace!("{}", message),
-                    }
-                }
-            }
-        }
-    }
-    
-    /// 处理任务调度消息
-    async fn handle_schedule_task(&self, timestamp: chrono::NaiveDateTime, delay_ms: u64, key: String, arg: String) {
-        info_log!("task[{}] add at {} + {}ms", key, timestamp.format("%Y-%m-%d %H:%M:%S%.3f"), delay_ms);
-        let result = self.taskscheduler.schedule(
-            timestamp,
-            std::time::Duration::from_millis(delay_ms),
-            key.clone(),
-            arg,
-            {
-                let message_bus = self.message_bus.clone();
-                move |key, eventdata| {
-                    let _ = message_bus.send(CronMessage::ExecuteTask { key, eventdata });
-                }
-            },
-        ).await;
-        
-        if let Err(e) = result {
-            error_log!("任务调度失败: {} - {}", key, e);
-            // 当任务调度失败时，更新任务状态为未监控，以便重新加载时可以重新尝试调度
-            let mut guard = self.inner.lock().await;
-            for detail in guard.taskdetails.iter_mut() {
-                if crate::common::utils::gen_task_key(detail.taskid, &detail.timepoint) == key {
-                    detail.status = crate::common::consts::TASK_STATUS_UNMONITORED;
-                    break;
-                }
-            }
-        }
-    }
-    
-    /// 处理任务取消消息
-    async fn handle_cancel_task(&self, timestamp: chrono::NaiveDateTime, delay_ms: u64, key: String) {
-        info_log!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp.format("%Y-%m-%d %H:%M:%S%.3f"), delay_ms);
-        let result = self.taskscheduler.cancel(
-            timestamp,
-            std::time::Duration::from_millis(delay_ms),
-            key.clone(),
-        ).await;
-        
-        if let Err(e) = result {
-            error_log!("任务取消失败: {} - {}", key, e);
-        }
-    }
-    
-    /// 获取活跃任务数量
-    /// 
-    /// # 返回值
-    /// 返回当前监控中的任务数量
-    pub async fn active_task_count(&self) -> usize {
-        let guard = self.inner.lock().await;
-        guard.taskdetails
-            .iter()
-            .filter(|detail| detail.status == TASK_STATUS_MONITORING)
-            .count()
-    }
-    
-    /// 获取所有任务详情
-    /// 
-    /// # 返回值
-    /// 返回所有任务详情的副本
-    pub async fn get_task_details(&self) -> Vec<TaskDetail> {
-        let guard = self.inner.lock().await;
-        guard.taskdetails.clone()
-    }
-    
-    /// 清空所有任务
-    pub async fn clear_all_tasks(&self) {
-        let mut guard = self.inner.lock().await;
-        guard.taskdetails.clear();
-        guard.tasks.clear();
-        info_log!("所有任务已清空");
+        crate::core::handlers::message_handler::MessageHandler::handle_messages(self).await;
     }
 }
 
@@ -237,4 +133,6 @@ impl CronTask {
             instance.handle_messages().await;
         });
     }
+    
+
 }

@@ -60,10 +60,47 @@ fn init_logger() {
 
 /// 加载配置文件
 fn load_config() -> Config {
-    Config::from_file("config.toml").unwrap_or_else(|e| {
+    let config = Config::from_file("config.toml").unwrap_or_else(|e| {
         eprintln!("警告: 无法加载配置文件 config.toml: {}，使用默认配置", e);
         Config::default()
-    })
+    });
+    
+    info_log!("配置文件加载成功，配置来源: {}", 
+        if std::path::Path::new("config.toml").exists() { "config.toml" } else { "默认配置" }
+    );
+    
+    // 打印加载的配置参数
+    print_config(&config);
+    
+    config
+}
+
+/// 打印配置参数
+fn print_config(config: &Config) {
+    info_log!("=== 加载的配置参数 ===");
+    info_log!("数据库配置:");
+    info_log!("  - 数据库路径: {}", config.database.path);
+    
+    info_log!("调度器配置:");
+    info_log!("  - 时间轮间隔: {}ms", config.scheduler.tick_interval_ms);
+    info_log!("  - 时间轮总槽数: {}", config.scheduler.total_slots);
+    
+    info_log!("Cron配置:");
+    info_log!("  - 重载间隔: {}ms", config.cron.reload_interval_ms);
+    
+    info_log!("日志配置:");
+    info_log!("  - 日志级别: {}", config.logging.log_level);
+    if let Some(ref log_file) = config.logging.log_file {
+        info_log!("  - 日志文件: {}", log_file);
+    } else {
+        info_log!("  - 日志文件: 标准输出");
+    }
+    
+    info_log!("消息配置:");
+    info_log!("  - 通道缓冲区大小: {}", config.messaging.channel_buffer_size);
+    info_log!("  - 消息超时: {}ms", config.messaging.message_timeout_ms);
+    info_log!("  - 测试超时: {}ms", config.messaging.test_timeout_ms);
+    info_log!("========================");
 }
 
 /// 初始化数据库连接
@@ -95,7 +132,6 @@ async fn start_task_manager(config: &Config, db: Database) -> Result<std::sync::
         config.cron.reload_interval_ms,
         config.scheduler.tick_interval_ms,
         config.scheduler.total_slots,
-        config.cron.max_schedule_days,
         db
     );
     

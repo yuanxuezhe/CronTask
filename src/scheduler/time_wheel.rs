@@ -117,7 +117,6 @@ impl TimeWheel {
             .ok_or(CronTaskError::TimeOverflow)?;
             
         // 使用存储的当前槽位而不是实时计算
-        let current_slot = self.current_slot.load(Ordering::Relaxed); 
         let target_slot = self.get_slot(target_time)?;
         // 打印当前槽位和目标槽位
         // println!("当前槽位: {}, 目标槽位: {}", current_slot, target_slot);

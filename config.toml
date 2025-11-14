@@ -5,8 +5,17 @@ path = "evdata.db"
 
 [scheduler]
 tick_interval_ms = 1000
-total_slots = 3600
+total_slots = 60
 
 [cron]
 reload_interval_ms = 10000
 max_schedule_days = 1
+
+[logging]
+log_level = "info"
+log_file = "debug.log"
+
+[messaging]
+channel_buffer_size = 1000
+message_timeout_ms = 100
+test_timeout_ms = 10

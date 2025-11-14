@@ -1,13 +1,19 @@
+// 注意：此文件已弃用，数据库操作现在由 core/db.rs 中的 CronTask 实现处理
+// 保留此文件作为将来可能的仓库模式实现参考
+
+#[allow(dead_code)]
 use crate::task_engine::model::Task;
 use dbcore::Database;
 use crate::common::error::CronTaskError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[allow(dead_code)]
 pub struct TaskRepository {
     db: Arc<Database>,
 }
 
+#[allow(dead_code)]
 impl TaskRepository {
     pub fn new(db: Arc<Database>) -> Self {
         Self { db }
