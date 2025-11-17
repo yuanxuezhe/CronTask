@@ -55,7 +55,7 @@ impl Config {
         
         // 将配置文件内容解析为 TOML 值的哈希表
         let parsed_toml: toml::Value = toml::from_str(&file_contents)
-            .map_err(|e| CronTaskError::Other(format!("解析配置文件失败: {}", e)))?;
+            .map_err(|e| CronTaskError::ConfigError(format!("解析配置文件失败: {}", e)))?;
         
         // 合并配置：配置文件存在的字段使用配置值，不存在的使用默认值
         let merged_config = Self::merge_configs(&default_config, &parsed_toml)?;
@@ -146,11 +146,11 @@ impl Config {
     /// 验证配置的有效性
     pub fn validate(&self) -> Result<(), CronTaskError> {
         if self.scheduler.tick_interval_ms == 0 {
-            return Err(CronTaskError::Other("调度器时间间隔不能为0".to_string()));
+            return Err(CronTaskError::ConfigError("调度器时间间隔不能为0".to_string()));
         }
         
         if self.scheduler.total_slots == 0 {
-            return Err(CronTaskError::Other("时间轮总槽数不能为0".to_string()));
+            return Err(CronTaskError::ConfigError("时间轮总槽数不能为0".to_string()));
         }
         
         Ok(())

@@ -270,25 +270,33 @@ impl TimeWheel {
         Fut: std::future::Future<Output = ()> + Send,
     {
         let current = self.current_slot.load(Ordering::Relaxed);
+        
+        // 验证槽位索引的有效性
+        if current >= self.slots.len() {
+            eprintln!("警告: 无效的槽位索引 {}，最大有效索引为 {}", current, self.slots.len() - 1);
+            return;
+        }
+        
         let slot = self.slots[current].load();
         
         // 使用实时时间而不是基于tick计数的时间
         let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
 
         // 触发滴答事件回调
-        on_tick(current_time).await;
+        match tokio::time::timeout(std::time::Duration::from_millis(100), on_tick(current_time)).await {
+            Ok(_) => {},
+            Err(_) => {
+                eprintln!("警告: 时间轮回调执行超时");
+            }
+        }
         
-        // 尝试获取任务锁并设置超时，避免长时间阻塞
-        let task_clones = match tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            async move {
-                let mut tasks = slot.tasks.lock().await;
+        // 获取并释放任务锁，添加超时处理
+        let task_clones = match tokio::time::timeout(std::time::Duration::from_millis(50), slot.tasks.lock()).await {
+            Ok(mut tasks) => {
                 let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
                 drop(tasks);
                 task_clones
-            }
-        ).await {
-            Ok(task_clones) => task_clones,
+            },
             Err(_) => {
                 eprintln!("警告: 获取任务锁超时，跳过任务处理");
                 return;

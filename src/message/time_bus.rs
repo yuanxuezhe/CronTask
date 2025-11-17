@@ -81,8 +81,8 @@ impl TimeBus {
 impl TimeBus {
     /// 运行时间脉冲生成器
     async fn run_time_generator(self: Arc<Self>) {
-        // 初始化为50ms精度，平衡性能和响应速度
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+        // 初始化为最小精度秒，而不是毫秒
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50)); // 50ms精度，平衡性能和精度
         let mut last_second = 0;
         let mut last_minute = 0;
         let mut last_hour = 0;
@@ -176,17 +176,26 @@ impl TimeBus {
     
     /// 执行注册的回调函数
     async fn execute_callbacks(&self, pulse: TimePulse) {
-        // 在锁内直接执行回调，避免异步任务带来的生命周期问题
-        let callbacks = self.callbacks.read().await;
+        let mut callbacks_to_execute = Vec::new();
         
-        // 执行所有匹配的回调（精确匹配或位掩码匹配）
-        for (registered_type, callbacks_for_type) in callbacks.iter() {
-            if pulse.signal_type & *registered_type == *registered_type {
-                for callback in callbacks_for_type {
-                    // 直接在当前上下文中执行回调
-                    callback(pulse.clone());
+        {    
+            let callbacks = self.callbacks.read().await;
+            for (registered_type, callbacks_for_type) in callbacks.iter() {
+                // 直接使用u8值，不需要解引用
+                let reg_type = *registered_type;
+                if pulse.signal_type & reg_type == reg_type {
+                    for callback in callbacks_for_type.iter() {
+                        callbacks_to_execute.push(callback.clone());
+                    }
                 }
             }
+        }
+        
+        for callback in callbacks_to_execute {
+            tokio::spawn(async move {
+                // 按照TimeCallback类型定义正确调用回调函数
+                callback(pulse.clone());
+            });
         }
     }
 }

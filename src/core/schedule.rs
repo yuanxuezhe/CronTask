@@ -68,15 +68,12 @@ impl CronTask {
         let mut to_cancel = Vec::new();
         let mut to_schedule = Vec::new();
         
-        // 快速获取数据后立即释放锁
-        let (task_details, tasks) = {
-            let guard = self.inner.lock().await;
-            (guard.taskdetails.clone(), guard.tasks.clone())
-        };
+        // 直接在锁内处理数据，避免完整克隆
+        let guard = self.inner.lock().await;
         
-        for taskdetail in task_details {
+        for taskdetail in &guard.taskdetails {
             // 获取任务信息
-            let task = match tasks.get(&taskdetail.taskid) {
+            let task = match guard.tasks.get(&taskdetail.taskid) {
                 Some(task) => task,
                 None => {
                     crate::error_log!("任务ID {} 不存在", taskdetail.taskid);
@@ -93,12 +90,13 @@ impl CronTask {
                 }
             };
             
-            let task_key = gen_task_key(task.taskid, &taskdetail.timepoint);
             let delay_ms = (task.retry_interval * taskdetail.current_trigger_count) as u64;
             
             // 处理需要删除的任务
             if taskdetail.tag == TASK_TAG_DELETE {
                 if taskdetail.status == TASK_STATUS_MONITORING {
+                    // 仅在需要时生成task_key
+                    let task_key = gen_task_key(task.taskid, &taskdetail.timepoint);
                     to_cancel.push((ndt, delay_ms, task_key, taskdetail.taskid));
                 }
                 continue;
@@ -110,13 +108,16 @@ impl CronTask {
             }
             
             // 准备需要调度的任务
+            let task_key = gen_task_key(task.taskid, &taskdetail.timepoint);
+            // 使用task.discribe的引用构建消息，避免克隆
+            let message = self.build_task_message(&task.discribe, taskdetail.current_trigger_count);
             to_schedule.push((
                 ndt,
                 delay_ms,
                 task_key,
-                self.build_task_message(task.discribe.clone(), taskdetail.current_trigger_count),
+                message,
                 taskdetail.taskid,
-                taskdetail.timepoint,
+                taskdetail.timepoint.clone(), // 保留必要的克隆，因为我们需要所有权
             ));
         }
         

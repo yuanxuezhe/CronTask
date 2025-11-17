@@ -1,5 +1,5 @@
 // 标准库导入
-use std::sync::Arc;
+
 
 // 外部 crate 导入
 use chrono::{Local, NaiveDateTime};
@@ -100,7 +100,7 @@ impl CronTask {
     ) -> Result<(), String> {
         // 增加重试计数并构建消息
         taskdetail.current_trigger_count += 1;
-        let message = self.build_task_message(task.discribe.clone(), taskdetail.current_trigger_count);
+        let message = self.build_task_message(&task.discribe, taskdetail.current_trigger_count);
         let delay_ms = (task.retry_interval * taskdetail.current_trigger_count) as u64;
 
         // 调度重试任务
@@ -203,11 +203,11 @@ impl CronTask {
     /// 
     /// # 返回值
     /// 返回构建好的任务消息字符串
-    pub(crate) fn build_task_message(&self, description: String, current_trigger_count: i32) -> String {
+    pub(crate) fn build_task_message(&self, description: &str, current_trigger_count: i32) -> String {
         if current_trigger_count == 0 {
-            description
+            description.to_string()
         } else {
-            format!("{}（重复提醒第{}次）", description, current_trigger_count)
+            format!("{}, 重试第{}次", description, current_trigger_count)
         }
     }
 }
