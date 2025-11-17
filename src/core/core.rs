@@ -88,7 +88,10 @@ impl CronTask {
     /// 初始化加载任务
     /// 在 CronTask 构造完成后调用此方法来触发初始任务加载
     pub async fn init_load_tasks(self: &Arc<Self>) {
-        // 发送初始重新加载任务消息
+        // 立即执行初始任务加载，而不是通过消息队列
+        CronTask::reload_tasks(self).await;
+        
+        // 然后设置定期重新加载
         let reload_name = RELOAD_TASK_NAME.to_string();
         let reload_interval = self.reload_interval;
         let message_bus = self.message_bus.clone();
@@ -115,15 +118,29 @@ impl CronTask {
     fn start_time_wheel(instance: &Arc<CronTask>, time_bus: Arc<TimeBus>) {
         let time_wheel = instance.taskscheduler.time_wheel();
         let time_bus_for_wheel = time_bus.clone();
+        
+        // 创建一个持久的订阅者来防止通道关闭
+        let time_bus_subscriber = time_bus.clone();
+        tokio::spawn(async move {
+            // 订阅时间总线但不处理消息，仅保持通道活跃
+            let mut _receiver = time_bus_subscriber.subscribe();
+            // 这个任务会一直运行，保持接收器存在
+            std::future::pending::<()>().await;
+        });
+        
+        // 注册时间回调来驱动时间轮
         tokio::spawn(async move {
             time_bus_for_wheel.register_callback(0b000010, move |_pulse| {
                 let time_wheel_clone = time_wheel.clone();
                 tokio::spawn(async move {
                     time_wheel_clone.run(|_timestamp| async move {
-                        // 时间轮滴答回调，可以在这里添加日志或其他处理
+                        // 时间轮滴答回调
                     }).await;
                 });
             }).await;
+            
+            // 保持任务运行，防止time_bus_for_wheel被丢弃
+            std::future::pending::<()>().await;
         });
     }
     

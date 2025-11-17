@@ -186,12 +186,18 @@ impl TimeWheel {
     {
         // 基于实际时间计算当前槽位，而不是简单地递增
         let now = Utc::now().with_timezone(&Shanghai).naive_local();
-        if let Ok(current_slot) = self.get_slot(now) {
-            // 原子更新当前槽位
-            self.current_slot.store(current_slot, Ordering::Release);
-            
-            // 执行任务处理
-            self.process_current_slot_with_callback(&on_tick).await;
+        match self.get_slot(now) {
+            Ok(current_slot) => {
+                // 原子更新当前槽位
+                self.current_slot.store(current_slot, Ordering::Release);
+                
+                // 执行任务处理
+                self.process_current_slot_with_callback(&on_tick).await;
+            },
+            Err(e) => {
+                // 记录错误但不中断执行
+                eprintln!("时间轮计算槽位失败: {}", e);
+            }
         }
     }
 }
@@ -272,12 +278,21 @@ impl TimeWheel {
         // 触发滴答事件回调
         on_tick(current_time).await;
         
-        // 获取并释放任务锁
-        let task_clones = {
-            let mut tasks = slot.tasks.lock().await;
-            let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
-            drop(tasks);
-            task_clones
+        // 尝试获取任务锁并设置超时，避免长时间阻塞
+        let task_clones = match tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            async move {
+                let mut tasks = slot.tasks.lock().await;
+                let task_clones: Vec<_> = tasks.drain().map(|(key, (task, arg))| (key, task, arg)).collect();
+                drop(tasks);
+                task_clones
+            }
+        ).await {
+            Ok(task_clones) => task_clones,
+            Err(_) => {
+                eprintln!("警告: 获取任务锁超时，跳过任务处理");
+                return;
+            }
         };
         
         // 并行执行任务

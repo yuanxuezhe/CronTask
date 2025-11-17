@@ -81,7 +81,8 @@ impl TimeBus {
 impl TimeBus {
     /// 运行时间脉冲生成器
     async fn run_time_generator(self: Arc<Self>) {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(1)); // 1ms精度
+        // 初始化为50ms精度，平衡性能和响应速度
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
         let mut last_second = 0;
         let mut last_minute = 0;
         let mut last_hour = 0;
@@ -108,7 +109,10 @@ impl TimeBus {
                 };
                 
                 // 发送脉冲到订阅者
-                let _ = self.sender.send(pulse.clone());
+                if let Err(e) = self.sender.send(pulse.clone()) {
+                    // 记录错误但不中断循环
+                    eprintln!("发送时间脉冲失败: {}", e);
+                }
                 
                 // 执行注册的回调函数
                 self.execute_callbacks(pulse).await;
@@ -127,42 +131,44 @@ impl TimeBus {
     ) -> u8 {
         let mut signal_type = 0;
         
-        // 毫秒信号（总是发送）
-        signal_type |= 0b000001;
+        // 使用更精确的毫秒级时间戳判断
+        let current_timestamp = now.timestamp_millis();
         
         // 秒信号
-        let second = now.timestamp();
+        let second = current_timestamp / 1000;
         if second != *last_second {
             *last_second = second;
             signal_type |= 0b000010;
-        }
-        
-        // 分钟信号
-        let minute = now.timestamp() / 60;
-        if minute != *last_minute {
-            *last_minute = minute;
-            signal_type |= 0b000100;
-        }
-        
-        // 小时信号
-        let hour = now.timestamp() / 3600;
-        if hour != *last_hour {
-            *last_hour = hour;
-            signal_type |= 0b001000;
-        }
-        
-        // 天信号
-        let day = now.timestamp() / 86400;
-        if day != *last_day {
-            *last_day = day;
-            signal_type |= 0b010000;
-        }
-        
-        // 周信号（ISO周）
-        let week = now.iso_week().week() as i64;
-        if week != *last_week {
-            *last_week = week;
-            signal_type |= 0b100000;
+            
+            // 只有在秒变化时才检查更高精度的信号
+            
+            // 分钟信号
+            let minute = second / 60;
+            if minute != *last_minute {
+                *last_minute = minute;
+                signal_type |= 0b000100;
+                
+                // 小时信号
+                let hour = minute / 60;
+                if hour != *last_hour {
+                    *last_hour = hour;
+                    signal_type |= 0b001000;
+                    
+                    // 天信号
+                    let day = hour / 24;
+                    if day != *last_day {
+                        *last_day = day;
+                        signal_type |= 0b010000;
+                        
+                        // 周信号（ISO周）
+                        let week = now.iso_week().week() as i64;
+                        if week != *last_week {
+                            *last_week = week;
+                            signal_type |= 0b100000;
+                        }
+                    }
+                }
+            }
         }
         
         signal_type
@@ -170,12 +176,14 @@ impl TimeBus {
     
     /// 执行注册的回调函数
     async fn execute_callbacks(&self, pulse: TimePulse) {
+        // 在锁内直接执行回调，避免异步任务带来的生命周期问题
         let callbacks = self.callbacks.read().await;
         
         // 执行所有匹配的回调（精确匹配或位掩码匹配）
         for (registered_type, callbacks_for_type) in callbacks.iter() {
             if pulse.signal_type & *registered_type == *registered_type {
                 for callback in callbacks_for_type {
+                    // 直接在当前上下文中执行回调
                     callback(pulse.clone());
                 }
             }
