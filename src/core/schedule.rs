@@ -2,6 +2,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+// 错误类型导入
+use crate::common::error::CronTaskError;
+
 // 外部 crate 导入
 use chrono::{NaiveDateTime, TimeDelta, Utc};
 use chrono_tz::Asia::Shanghai;
@@ -125,7 +128,7 @@ impl CronTask {
     }
     
     /// 取消任务
-    async fn cancel_tasks(&self, to_cancel: Vec<(NaiveDateTime, u64, String, i32)>) -> Result<(), String> {
+    async fn cancel_tasks(&self, to_cancel: Vec<(NaiveDateTime, u64, String, i32)>) -> Result<(), CronTaskError> {
         let mut status_updates = Vec::new();
         
         for (ndt, delay_ms, task_key, task_id) in to_cancel {
@@ -141,6 +144,7 @@ impl CronTask {
                 },
                 Err(e) => {
                     crate::error_log!("发送取消消息失败: {} - {}", task_key, e);
+                    // 记录错误但继续处理其他任务
                 }
             }
         }
@@ -154,7 +158,7 @@ impl CronTask {
     }
     
     /// 批量更新任务状态
-    async fn batch_update_task_status(&self, updates: Vec<(i32, String)>) -> Result<(), String> {
+    async fn batch_update_task_status(&self, updates: Vec<(i32, String)>) -> Result<(), CronTaskError> {
         let mut guard = self.inner.lock().await;
         
         for (task_id, task_key) in updates {
@@ -170,7 +174,7 @@ impl CronTask {
     }
     
     /// 调度任务
-    async fn schedule_tasks(&self, to_schedule: Vec<(NaiveDateTime, u64, String, String, i32, String)>) -> Result<(), String> {
+    async fn schedule_tasks(&self, to_schedule: Vec<(NaiveDateTime, u64, String, String, i32, String)>) -> Result<(), CronTaskError> {
         // 先收集所有需要更新状态的任务信息
         let mut status_updates = Vec::new();
         
@@ -187,6 +191,7 @@ impl CronTask {
                 },
                 Err(e) => {
                     crate::error_log!("发送任务调度消息失败: {} - {}", task_key, e);
+                    // 记录错误但继续处理其他任务
                 },
             }
         }

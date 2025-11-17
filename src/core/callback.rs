@@ -7,6 +7,7 @@ use chrono::{Local, NaiveDateTime};
 // 内部模块导入
 use crate::common::consts::*;
 use crate::common::utils::gen_task_key;
+use crate::common::error::CronTaskError;
 use crate::core::core::CronTask;
 use crate::message::message_bus::CronMessage;
 use crate::task_engine::model::TaskDetail;
@@ -35,7 +36,7 @@ impl CronTask {
     /// 
     /// # 返回值
     /// 返回 Result<(), String> 表示执行结果
-    pub async fn on_call_back_inner(&self, key: String, eventdata: String) -> Result<(), String> {
+    pub async fn on_call_back_inner(&self, key: String, eventdata: String) -> Result<(), CronTaskError> {
         crate::info_log!("task[{}] run with param:{}", key, eventdata);
         
         // 处理重新加载任务的特殊逻辑
@@ -61,7 +62,7 @@ impl CronTask {
 // 私有辅助方法实现
 impl CronTask {
     /// 处理重新加载任务
-    async fn handle_reload_task(&self, key: String, eventdata: String) -> Result<(), String> {
+    async fn handle_reload_task(&self, key: String, eventdata: String) -> Result<(), CronTaskError> {
         let _ = self.message_bus.send(CronMessage::ScheduleTask {
             timestamp: Local::now().naive_local(), 
             delay_ms: self.reload_interval, 
@@ -75,16 +76,16 @@ impl CronTask {
     }
     
     /// 解析并验证任务键，返回任务ID、时间点和任务键
-    fn parse_and_validate_task_key(&self, key: &str) -> Result<(i32, NaiveDateTime, String), String> {
+    fn parse_and_validate_task_key(&self, key: &str) -> Result<(i32, NaiveDateTime, String), CronTaskError> {
         let parts: Vec<&str> = key.split(TASK_KEY_SEPARATOR).collect();
         if parts.len() != 2 {
-            return Err(format!("任务名称格式错误: {}", key));
+            return Err(CronTaskError::TaskFormatError(format!("任务名称格式错误: {}", key)));
         }
         
         let task_id: i32 = parts[0].parse()
-            .map_err(|_| format!("任务ID解析失败: {}", parts[0]))?;
+            .map_err(|_| CronTaskError::TaskFormatError(format!("任务ID解析失败: {}", parts[0])))?;
         let time_point: NaiveDateTime = NaiveDateTime::parse_from_str(parts[1], DATETIME_FORMAT)
-            .map_err(|_| format!("时间点解析失败: {}", parts[1]))?;
+            .map_err(|_| CronTaskError::TimeConversionFailed(format!("时间点解析失败: {}", parts[1])))?;
         
         let task_key = gen_task_key(task_id, &time_point.to_string());
         Ok((task_id, time_point, task_key))
@@ -97,7 +98,7 @@ impl CronTask {
         time_point: NaiveDateTime,
         task_key: &str,
         taskdetail: &mut TaskDetail
-    ) -> Result<(), String> {
+    ) -> Result<(), CronTaskError> {
         // 增加重试计数并构建消息
         taskdetail.current_trigger_count += 1;
         let message = self.build_task_message(&task.discribe, taskdetail.current_trigger_count);
@@ -113,21 +114,21 @@ impl CronTask {
     }
     
     /// 根据任务ID获取任务信息
-    async fn get_task_by_id(&self, task_id: i32) -> Result<crate::task_engine::model::Task, String> {
+    async fn get_task_by_id(&self, task_id: i32) -> Result<crate::task_engine::model::Task, CronTaskError> {
         let guard = self.inner.lock().await;
         guard.tasks.get(&task_id)
             .cloned()
-            .ok_or_else(|| format!("任务ID {} 不存在", task_id))
+            .ok_or_else(|| CronTaskError::TaskNotFound(format!("任务ID {} 获取失败", task_id)))
     }
     
     /// 获取任务详情
-    async fn get_task_detail(&self, task_key: &str) -> Result<TaskDetail, String> {
+    async fn get_task_detail(&self, task_key: &str) -> Result<TaskDetail, CronTaskError> {
         let guard = self.inner.lock().await;
         let taskdetail = guard.taskdetails
             .iter()
             .find(|detail| gen_task_key(detail.taskid, &detail.timepoint) == task_key)
             .cloned();
-        taskdetail.ok_or_else(|| format!("任务明细不存在: {}", task_key))
+        taskdetail.ok_or_else(|| CronTaskError::TaskNotFound(format!("任务明细不存在: {}", task_key)))
     }
     
     /// 处理达到最大重试次数的情况
@@ -135,7 +136,7 @@ impl CronTask {
         &self, 
         task: &crate::task_engine::model::Task, 
         taskdetail: &mut TaskDetail
-    ) -> Result<(), String> {
+    ) -> Result<(), CronTaskError> {
         crate::info_log!("任务 {} 达到最大重试次数，停止调度", task.taskname);
         taskdetail.status = TASK_STATUS_UNMONITORED;
         self.update_task_detail(taskdetail.clone()).await?;
@@ -152,7 +153,7 @@ impl CronTask {
         task_key: String,
         message: String,
         taskdetail: &mut TaskDetail
-    ) -> Result<(), String> {
+    ) -> Result<(), CronTaskError> {
         match self.message_bus.send(CronMessage::ScheduleTask {
             timestamp: time_point,
             delay_ms,
@@ -167,14 +168,14 @@ impl CronTask {
                 taskdetail.status = TASK_STATUS_UNMONITORED;
                 self.update_task_detail(taskdetail.clone()).await?;
                 self.update_task_status_in_db(taskdetail.taskid, &taskdetail.timepoint, taskdetail.status).await?;
-                return Err(format!("任务重试调度失败: {} - {}", task_key, e));
+                return Err(CronTaskError::ScheduleError(format!("任务重试调度失败: {} - {}", task_key, e)));
             },
         }
         Ok(())
     }
     
     /// 持久化更新任务详情
-    async fn update_task_detail(&self, taskdetail: TaskDetail) -> Result<(), String> {
+    async fn update_task_detail(&self, taskdetail: TaskDetail) -> Result<(), CronTaskError> {
         let mut guard = self.inner.lock().await;
         if let Some(detail) = guard.taskdetails
             .iter_mut()
@@ -185,7 +186,7 @@ impl CronTask {
     }
     
     /// 更新数据库中的任务状态
-    async fn update_task_status_in_db(&self, task_id: i32, timepoint: &str, status: i32) -> Result<(), String> {
+    async fn update_task_status_in_db(&self, task_id: i32, timepoint: &str, status: i32) -> Result<(), CronTaskError> {
         // 在这里实现更新数据库中任务状态的逻辑
         // 由于TaskDetail没有独立的表，我们可以考虑在task表中添加额外的字段
         // 或者创建一个task_status表来跟踪每个任务在特定时间点的状态

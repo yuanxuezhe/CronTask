@@ -11,6 +11,18 @@ pub enum CronTaskError {
     #[error("配置错误: {0}")]
     ConfigError(String),
     
+    /// 任务格式错误
+    #[error("任务格式错误: {0}")]
+    TaskFormatError(String),
+    
+    /// 任务执行错误
+    #[error("任务执行错误: {0}")]
+    TaskExecutionError(String),
+    
+    /// 调度错误
+    #[error("调度错误: {0}")]
+    ScheduleError(String),
+    
     #[error("数据库错误: {0}")]
     DatabaseError(#[from] sqlx::Error),
     

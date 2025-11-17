@@ -3,6 +3,7 @@ use chrono_tz::Asia::Shanghai;
 //use crate::task::model::Task;
 use crate::task_engine::holiday::{is_holiday, is_weekend, parse_date};
 use crate::common::consts::*;
+use crate::common::error::CronTaskError;
 
 impl crate::task_engine::model::Task {
     /// 根据任务的调度规则计算指定时间范围内的所有调度时间点列表
@@ -88,9 +89,10 @@ impl crate::task_engine::model::Task {
     /// 
     /// # 返回值
     /// 成功时返回检查结果，失败时返回错误信息
-    fn check_date(&self, date: NaiveDate) -> Result<bool, String> {
-        let start = parse_date(&self.start_date).ok_or("无效开始日期")?;
-        let end = parse_date(&self.end_date).ok_or("无效结束日期")?;
+    fn check_date(&self, date: NaiveDate) -> Result<bool, CronTaskError> {
+        use crate::common::error::CronTaskError;
+        let start = parse_date(&self.start_date).ok_or(CronTaskError::TaskFormatError("无效开始日期".to_string()))?;
+        let end = parse_date(&self.end_date).ok_or(CronTaskError::TaskFormatError("无效结束日期".to_string()))?;
         Ok(date >= start && date <= end)
     }
     

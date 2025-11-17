@@ -7,6 +7,8 @@ use chrono::{DateTime, Datelike, Utc};
 use chrono_tz::Asia::Shanghai;
 use tokio::sync::{broadcast, RwLock};
 
+// 本地导入
+
 /// 时间事件类型 - 使用位值表示不同精度的时间信号
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimePulse {
@@ -22,8 +24,8 @@ pub struct TimePulse {
     pub signal_type: u8,
 }
 
-/// 时间回调函数类型
-pub type TimeCallback = Box<dyn Fn(TimePulse) + Send + Sync>;
+/// 时间回调函数类型 - 使用Arc包装以便于共享所有权
+pub type TimeCallback = Arc<Box<dyn Fn(TimePulse) + Send + Sync + 'static>>;
 
 /// 时间总线
 pub struct TimeBus {
@@ -68,7 +70,11 @@ impl TimeBus {
         F: Fn(TimePulse) + Send + Sync + 'static,
     {
         let mut callbacks = self.callbacks.write().await;
-        callbacks.entry(signal_type).or_insert_with(Vec::new).push(Box::new(callback));
+        // 创建一个新的Arc<Box<dyn Fn(TimePulse) + Send + Sync + 'static>>
+        // 确保正确进行trait object转换
+        let callback_box: Box<dyn Fn(TimePulse) + Send + Sync + 'static> = Box::new(callback);
+        let callback_arc = Arc::new(callback_box);
+        callbacks.entry(signal_type).or_insert_with(Vec::new).push(callback_arc);
     }
     
     /// 获取当前时间
@@ -176,25 +182,35 @@ impl TimeBus {
     
     /// 执行注册的回调函数
     async fn execute_callbacks(&self, pulse: TimePulse) {
+        // 创建一个向量来存储所有需要执行的回调函数的Arc克隆
         let mut callbacks_to_execute = Vec::new();
         
-        {    
-            let callbacks = self.callbacks.read().await;
-            for (registered_type, callbacks_for_type) in callbacks.iter() {
-                // 直接使用u8值，不需要解引用
-                let reg_type = *registered_type;
-                if pulse.signal_type & reg_type == reg_type {
-                    for callback in callbacks_for_type.iter() {
-                        callbacks_to_execute.push(callback.clone());
+        // 在锁的作用域内获取匹配的回调函数
+        {
+            let callbacks_ref = self.callbacks.read().await;
+            
+            // 遍历所有注册的回调类型
+            for (&signal_mask, callbacks_list) in callbacks_ref.iter() {
+                // 检查当前pulse是否匹配此信号类型
+                if pulse.signal_type & signal_mask == signal_mask {
+                    // 为每个匹配的回调函数创建Arc克隆
+                    for callback in callbacks_list {
+                        callbacks_to_execute.push(Arc::clone(callback));
                     }
                 }
             }
         }
+        // 锁在这里自动释放
         
-        for callback in callbacks_to_execute {
+        // 在锁外，为每个回调启动独立的异步任务
+        for callback_arc in callbacks_to_execute {
+            // 克隆pulse以在异步任务中使用
+            let pulse_copy = pulse.clone();
+            
+            // 启动异步任务，move语义确保callback_arc和pulse_copy的所有权被转移
             tokio::spawn(async move {
-                // 按照TimeCallback类型定义正确调用回调函数
-                callback(pulse.clone());
+                // 直接调用回调函数，因为Arc会自动解引用
+                (callback_arc)(pulse_copy);
             });
         }
     }
@@ -217,7 +233,10 @@ mod tests {
     #[tokio::test]
     async fn test_time_bus_creation() {
         let time_bus = TimeBus::new();
-        assert!(time_bus.subscribe().recv().await.is_ok());
+        // 添加超时处理以避免测试无限等待
+        let result = timeout(Duration::from_millis(100), time_bus.subscribe().recv()).await;
+        assert!(result.is_ok(), "超时: 未能在100毫秒内接收信号");
+        assert!(result.unwrap().is_ok(), "接收信号失败");
     }
 
     #[tokio::test]
