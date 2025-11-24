@@ -41,21 +41,51 @@ impl CronTask {
         
         // 处理重新加载任务的特殊逻辑
         if key == RELOAD_TASK_NAME {
-            return self.handle_reload_task(key, eventdata).await;
+            return self.handle_reload_task(key, eventdata).await
+                .map_err(|e| {
+                    crate::error_log!("重新加载任务失败: {}", e);
+                    CronTaskError::ScheduleError(format!("重新加载任务失败: {}", e))
+                });
         }
 
         // 获取任务信息
-        let (task_id, time_point, task_key) = self.parse_and_validate_task_key(&key)?;
-        let task = self.get_task_by_id(task_id).await?;
-        let mut taskdetail = self.get_task_detail(&task_key).await?;
+        let (task_id, time_point, task_key) = self.parse_and_validate_task_key(&key)
+            .map_err(|e| {
+                crate::error_log!("任务键解析失败 ({}): {}", key, e);
+                CronTaskError::TaskFormatError(format!("任务键解析失败 ({}): {}", key, e))
+            })?;
+            
+        let task = self.get_task_by_id(task_id).await
+            .map_err(|e| {
+                crate::error_log!("获取任务信息失败 (任务ID: {}): {}", task_id, e);
+                CronTaskError::TaskNotFound(format!("任务ID {} 信息获取失败: {}", task_id, e))
+            })?;
+            
+        let mut taskdetail = self.get_task_detail(&task_key).await
+            .map_err(|e| {
+                crate::error_log!("获取任务详情失败 (任务键: {}): {}", task_key, e);
+                CronTaskError::TaskNotFound(format!("任务详情 (键: {}) 获取失败: {}", task_key, e))
+            })?;
 
         // 检查并处理重试逻辑
         if taskdetail.current_trigger_count >= task.retry_count {
-            return self.handle_max_retries_reached(&task, &mut taskdetail).await;
+            return self.handle_max_retries_reached(&task, &mut taskdetail).await
+                .map_err(|e| {
+                    crate::error_log!("处理最大重试次数失败 (任务ID: {}, 时间点: {}): {}", 
+                        task.taskid, taskdetail.timepoint, e);
+                    CronTaskError::TaskExecutionError(format!("任务达到最大重试次数 (ID: {}): {}", 
+                        task.taskid, e))
+                });
         }
 
         // 处理任务重试
         self.handle_task_retry(&task, time_point, &task_key, &mut taskdetail).await
+            .map_err(|e| {
+                crate::error_log!("任务重试处理失败 (任务ID: {}, 当前重试次数: {}): {}", 
+                    task.taskid, taskdetail.current_trigger_count, e);
+                CronTaskError::TaskExecutionError(format!("任务重试处理失败 (ID: {}, 重试次数: {}): {}", 
+                    task.taskid, taskdetail.current_trigger_count, e))
+            })
     }
 }
 
@@ -115,7 +145,8 @@ impl CronTask {
     
     /// 根据任务ID获取任务信息
     async fn get_task_by_id(&self, task_id: i32) -> Result<crate::task_engine::model::Task, CronTaskError> {
-        let guard = self.inner.lock().await;
+        // 只读操作，使用read()
+        let guard = self.inner.read().await;
         guard.tasks.get(&task_id)
             .cloned()
             .ok_or_else(|| CronTaskError::TaskNotFound(format!("任务ID {} 获取失败", task_id)))
@@ -123,9 +154,10 @@ impl CronTask {
     
     /// 获取任务详情
     async fn get_task_detail(&self, task_key: &str) -> Result<TaskDetail, CronTaskError> {
-        let guard = self.inner.lock().await;
+        // 只读操作，使用read()
+        let guard = self.inner.read().await;
         let taskdetail = guard.taskdetails
-            .iter()
+            .values()
             .find(|detail| gen_task_key(detail.taskid, &detail.timepoint) == task_key)
             .cloned();
         taskdetail.ok_or_else(|| CronTaskError::TaskNotFound(format!("任务明细不存在: {}", task_key)))
@@ -176,12 +208,12 @@ impl CronTask {
     
     /// 持久化更新任务详情
     async fn update_task_detail(&self, taskdetail: TaskDetail) -> Result<(), CronTaskError> {
-        let mut guard = self.inner.lock().await;
-        if let Some(detail) = guard.taskdetails
-            .iter_mut()
-            .find(|d| gen_task_key(d.taskid, &d.timepoint) == gen_task_key(taskdetail.taskid, &taskdetail.timepoint)) {
-            *detail = taskdetail;
-        }
+        // 需要修改任务详情，使用write()
+        let mut guard = self.inner.write().await;
+        // 使用(taskid, timepoint)作为键更新或插入任务详情
+        let key = (taskdetail.taskid, taskdetail.timepoint.clone());
+        guard.taskdetails.insert(key, taskdetail);
+        // 不需要检查是否存在，insert会直接更新或插入
         Ok(())
     }
     
@@ -206,9 +238,17 @@ impl CronTask {
     /// 返回构建好的任务消息字符串
     pub(crate) fn build_task_message(&self, description: &str, current_trigger_count: i32) -> String {
         if current_trigger_count == 0 {
-            description.to_string()
+            // 直接创建字符串，避免不必要的克隆
+            String::from(description)
         } else {
-            format!("{}, 重试第{}次", description, current_trigger_count)
+            // 预分配足够空间，避免多次内存分配
+            // 估算长度：原描述长度 + "重试第N次"部分(约10个字符) + 分隔符
+            let mut result = String::with_capacity(description.len() + 20);
+            result.push_str(description);
+            result.push_str(", 重试第");
+            result.push_str(&current_trigger_count.to_string());
+            result.push('次');
+            result
         }
     }
 }

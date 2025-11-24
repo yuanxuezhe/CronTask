@@ -38,8 +38,9 @@ impl ScheduleHandler {
         if let Err(e) = result {
             crate::error_log!("任务调度失败: {} - {}", key, e);
             // 当任务调度失败时，更新任务状态为未监控，以便重新加载时可以重新尝试调度
-            let mut guard = cron_task.inner.lock().await;
-            for detail in guard.taskdetails.iter_mut() {
+            // 需要修改状态，使用write()
+            let mut guard = cron_task.inner.write().await;
+            for (_, detail) in guard.taskdetails.iter_mut() {
                 if gen_task_key(detail.taskid, &detail.timepoint) == key {
                     detail.status = crate::common::consts::TASK_STATUS_UNMONITORED;
                     break;

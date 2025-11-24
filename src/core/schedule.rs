@@ -66,61 +66,72 @@ impl CronTask {
 
 // 私有辅助方法实现
 impl CronTask {
-    /// 收集需要处理的任务数据，尽量减少锁持有时间
+    /// 收集需要处理的任务数据，优化锁粒度
     async fn collect_tasks_for_processing(&self) -> (Vec<(NaiveDateTime, u64, String, i32)>, Vec<(NaiveDateTime, u64, String, String, i32, String)>) {
+        // 先在锁内收集必要的任务信息，然后释放锁
+        // 注意：元组包含7个元素：taskid, timepoint, current_trigger_count, status, tag, retry_interval, discribe
+        let task_data: Vec<(i32, String, i32, i32, i32, i32, String)> = {
+            // 只需要读取操作，使用read()而不是write()
+            let guard = self.inner.read().await;
+            // 从HashMap中获取所有TaskDetail值
+            guard.taskdetails.values()
+                .filter_map(|detail| {
+                    // 只收集必要的数据，避免在锁内进行复杂操作
+                    guard.tasks.get(&detail.taskid).map(|task| {
+                        (
+                            task.taskid,
+                            detail.timepoint.clone(), // 必须克隆，因为需要在锁外使用
+                            detail.current_trigger_count,
+                            detail.status,
+                            detail.tag,
+                            task.retry_interval,      // 只保存需要的值，避免完整克隆task
+                            task.discribe.clone()     // 必须克隆，因为需要在锁外构建消息
+                        )
+                    })
+                })
+                .collect()
+        };
+        
         let mut to_cancel = Vec::new();
         let mut to_schedule = Vec::new();
         
-        // 直接在锁内处理数据，避免完整克隆
-        let guard = self.inner.lock().await;
-        
-        for taskdetail in &guard.taskdetails {
-            // 获取任务信息
-            let task = match guard.tasks.get(&taskdetail.taskid) {
-                Some(task) => task,
-                None => {
-                    crate::error_log!("任务ID {} 不存在", taskdetail.taskid);
-                    continue;
-                }
-            };
-            
+        // 在锁外处理数据解析和复杂计算
+        for (task_id, timepoint, current_trigger_count, status, tag, retry_interval, discribe) in task_data {
             // 解析时间点
-            let ndt = match NaiveDateTime::parse_from_str(&taskdetail.timepoint, DATETIME_FORMAT) {
+            let ndt = match NaiveDateTime::parse_from_str(&timepoint, DATETIME_FORMAT) {
                 Ok(dt) => dt,
                 Err(e) => {
-                    crate::error_log!("时间点解析失败: {} - {}", taskdetail.timepoint, e);
+                    crate::error_log!("时间点解析失败: {} - {}", timepoint, e);
                     continue;
                 }
             };
             
-            let delay_ms = (task.retry_interval * taskdetail.current_trigger_count) as u64;
+            let delay_ms = (retry_interval * current_trigger_count) as u64;
             
             // 处理需要删除的任务
-            if taskdetail.tag == TASK_TAG_DELETE {
-                if taskdetail.status == TASK_STATUS_MONITORING {
-                    // 仅在需要时生成task_key
-                    let task_key = gen_task_key(task.taskid, &taskdetail.timepoint);
-                    to_cancel.push((ndt, delay_ms, task_key, taskdetail.taskid));
+            if tag == TASK_TAG_DELETE {
+                if status == TASK_STATUS_MONITORING {
+                    let task_key = gen_task_key(task_id, &timepoint);
+                    to_cancel.push((ndt, delay_ms, task_key, task_id));
                 }
                 continue;
             }
             
             // 跳过已监控但不需要重新调度的任务
-            if taskdetail.status != TASK_STATUS_UNMONITORED {
+            if status != TASK_STATUS_UNMONITORED {
                 continue;
             }
             
             // 准备需要调度的任务
-            let task_key = gen_task_key(task.taskid, &taskdetail.timepoint);
-            // 使用task.discribe的引用构建消息，避免克隆
-            let message = self.build_task_message(&task.discribe, taskdetail.current_trigger_count);
+            let task_key = gen_task_key(task_id, &timepoint);
+            let message = self.build_task_message(&discribe, current_trigger_count);
             to_schedule.push((
                 ndt,
                 delay_ms,
                 task_key,
                 message,
-                taskdetail.taskid,
-                taskdetail.timepoint.clone(), // 保留必要的克隆，因为我们需要所有权
+                task_id,
+                timepoint, // 已经在锁外克隆
             ));
         }
         
@@ -159,14 +170,17 @@ impl CronTask {
     
     /// 批量更新任务状态
     async fn batch_update_task_status(&self, updates: Vec<(i32, String)>) -> Result<(), CronTaskError> {
-        let mut guard = self.inner.lock().await;
+        // 需要修改任务状态，使用write()
+        let mut guard = self.inner.write().await;
         
         for (task_id, task_key) in updates {
-            if let Some(detail) = guard.taskdetails
-                .iter_mut()
-                .find(|d| d.taskid == task_id && gen_task_key(d.taskid, &d.timepoint) == task_key) {
-                detail.status = TASK_STATUS_UNMONITORED;
-                crate::info_log!("更新任务 {} 状态为未监控", task_key);
+            // 直接遍历HashMap查找匹配的任务
+            for (_, detail) in guard.taskdetails.iter_mut() {
+                if detail.taskid == task_id && gen_task_key(detail.taskid, &detail.timepoint) == task_key {
+                    detail.status = TASK_STATUS_UNMONITORED;
+                    crate::info_log!("更新任务 {} 状态为未监控", task_key);
+                    break;
+                }
             }
         }
         
@@ -198,11 +212,11 @@ impl CronTask {
         
         // 批量更新状态以减少锁竞争
         if !status_updates.is_empty() {
-            let mut guard = self.inner.lock().await;
+            // 需要修改任务状态，使用write()
+            let mut guard = self.inner.write().await;
             for (taskid, timepoint, new_status) in status_updates {
-                if let Some(detail) = guard.taskdetails
-                    .iter_mut()
-                    .find(|d| d.taskid == taskid && d.timepoint == timepoint) {
+                // 使用(taskid, timepoint)作为键直接查找
+                if let Some(detail) = guard.taskdetails.get_mut(&(taskid, timepoint.clone())) {
                     detail.status = new_status;
                 }
             }
@@ -213,8 +227,10 @@ impl CronTask {
     
     /// 清理已删除的任务
     async fn cleanup_deleted_tasks(&self) {
-        let mut guard = self.inner.lock().await;
-        guard.taskdetails.retain(|detail| detail.tag != TASK_TAG_DELETE || detail.status != TASK_STATUS_UNMONITORED);
+        // 需要删除任务，使用write()
+        let mut guard = self.inner.write().await;
+        // HashMap的retain闭包接收(&K, &mut V)参数
+        guard.taskdetails.retain(|_key, detail| detail.tag != TASK_TAG_DELETE || detail.status != TASK_STATUS_UNMONITORED);
     }
     
     /// 计算任务调度时间点
@@ -242,11 +258,13 @@ impl CronTask {
             }
             
             for tp in timepoints {
-                let key = gen_task_key(task.taskid, &tp.to_string());
-                new_keys.insert(key.clone());
+                // 只进行一次字符串转换
+                let timepoint_str = tp.to_string();
+                let key = gen_task_key(task.taskid, &timepoint_str);
+                new_keys.insert(key); // 直接插入，不需要克隆
                 new_task_details.push(TaskDetail {
                     taskid: task.taskid,
-                    timepoint: tp.to_string(),
+                    timepoint: timepoint_str, // 使用已转换的字符串
                     current_trigger_count: 0,
                     status: TASK_STATUS_UNMONITORED,
                     tag: TASK_TAG_NEW,
@@ -264,16 +282,17 @@ impl CronTask {
         new_task_details: Vec<TaskDetail>,
         new_keys: HashSet<String>
     ) {
-        let mut guard = self.inner.lock().await;
+        // 需要修改内部状态，使用write()
+        let mut guard = self.inner.write().await;
         
         // 创建旧任务明细键映射
         let old_keys: HashSet<String> = guard.taskdetails
             .iter()
-            .map(|detail| gen_task_key(detail.taskid, &detail.timepoint))
+            .map(|(_key, detail)| gen_task_key(detail.taskid, &detail.timepoint))
             .collect();
         
         // 标记需要保留的任务
-        for detail in guard.taskdetails.iter_mut() {
+        for (_, detail) in guard.taskdetails.iter_mut() {
             let key = gen_task_key(detail.taskid, &detail.timepoint);
             if new_keys.contains(&key) && detail.status == TASK_STATUS_MONITORING {
                 detail.tag = TASK_TAG_KEEP;
@@ -286,7 +305,8 @@ impl CronTask {
         for detail in new_task_details {
             let key = gen_task_key(detail.taskid, &detail.timepoint);
             if !old_keys.contains(&key) {
-                guard.taskdetails.push(detail);
+                // 使用HashMap的insert方法而不是push
+                guard.taskdetails.insert((detail.taskid, detail.timepoint.clone()), detail);
             }
         }
         

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // 外部 crate 导入
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use chrono::Local;
 
 // 内部模块导入
@@ -25,8 +25,8 @@ use dbcore::Database;
 pub struct CronTask {
     /// 任务调度器
     pub taskscheduler: Arc<TaskScheduler>,
-    /// 内部状态，包含任务和任务详情
-    pub inner: Arc<Mutex<InnerState>>,
+    /// 内部状态，包含任务和任务详情，使用RwLock优化读多写少场景
+    pub inner: Arc<RwLock<InnerState>>,
     /// 重新加载任务的时间间隔（毫秒）
     pub reload_interval: u64,
     /// 数据库连接
@@ -68,8 +68,8 @@ impl CronTask {
         
         let instance = Arc::new(Self {
             taskscheduler: task_scheduler,
-            inner: Arc::new(Mutex::new(InnerState {
-                taskdetails: Vec::new(),
+            inner: Arc::new(RwLock::new(InnerState {
+                taskdetails: HashMap::new(),
                 tasks: HashMap::new(),
             })),
             reload_interval: reload_millis,
