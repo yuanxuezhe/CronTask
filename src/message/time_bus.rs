@@ -39,14 +39,14 @@ impl TimeBus {
     /// 创建新的时间总线
     pub fn new() -> Arc<Self> {
         let (sender, _) = broadcast::channel(1000);
-        let time_bus = Arc::new(Self { 
+        let time_bus = Arc::new(Self {
             sender,
             callbacks: Arc::new(RwLock::new(HashMap::new())),
         });
-        
+
         // 启动时间脉冲生成器
         start_time_generator(time_bus.clone());
-        
+
         time_bus
     }
 
@@ -54,9 +54,9 @@ impl TimeBus {
     pub fn subscribe(&self) -> broadcast::Receiver<TimePulse> {
         self.sender.subscribe()
     }
-    
+
     /// 注册时间回调函数
-    /// 
+    ///
     /// # 参数
     /// * `signal_type` - 订阅的信号类型位值 (1=毫秒, 2=秒, 4=分钟, 8=小时, 16=天, 32=周)
     /// * `callback` - 回调函数
@@ -69,9 +69,12 @@ impl TimeBus {
         // 确保正确进行trait object转换
         let callback_box: Box<dyn Fn(TimePulse) + Send + Sync + 'static> = Box::new(callback);
         let callback_arc = Arc::new(callback_box);
-        callbacks.entry(signal_type).or_insert_with(Vec::new).push(callback_arc);
+        callbacks
+            .entry(signal_type)
+            .or_insert_with(Vec::new)
+            .push(callback_arc);
     }
-    
+
     /// 获取当前时间
     pub fn now() -> DateTime<chrono_tz::Tz> {
         Utc::now().with_timezone(&Shanghai)
@@ -89,38 +92,38 @@ impl TimeBus {
         let mut last_hour = 0;
         let mut last_day = 0;
         let mut last_week = 0;
-        
+
         loop {
             interval.tick().await;
-            
+
             let now = Self::now();
             let signal_type = Self::determine_signal_type(
-                now, 
-                &mut last_second, 
-                &mut last_minute, 
-                &mut last_hour, 
-                &mut last_day, 
-                &mut last_week
+                now,
+                &mut last_second,
+                &mut last_minute,
+                &mut last_hour,
+                &mut last_day,
+                &mut last_week,
             );
-            
+
             if signal_type > 0 {
                 let pulse = TimePulse {
                     timestamp: now,
                     signal_type,
                 };
-                
+
                 // 发送脉冲到订阅者
-                if let Err(e) = self.sender.send(pulse.clone()) {
+                if let Err(e) = self.sender.send(pulse) {
                     // 记录错误但不中断循环
-                    eprintln!("发送时间脉冲失败: {}", e);
+                    eprintln!("发送时间脉冲失败: {e}");
                 }
-                
+
                 // 执行注册的回调函数
                 self.execute_callbacks(pulse).await;
             }
         }
     }
-    
+
     /// 确定需要发送的信号类型
     fn determine_signal_type(
         now: DateTime<chrono_tz::Tz>,
@@ -131,39 +134,39 @@ impl TimeBus {
         last_week: &mut i64,
     ) -> u8 {
         let mut signal_type = 0;
-        
+
         // 使用更精确的毫秒级时间戳判断
         let current_timestamp = now.timestamp_millis();
-        
+
         // 毫秒信号
         signal_type |= 0b000001;
-        
+
         // 秒信号
         let second = current_timestamp / 1000;
         if second != *last_second {
             *last_second = second;
             signal_type |= 0b000010;
-            
+
             // 只有在秒变化时才检查更高精度的信号
-            
+
             // 分钟信号
             let minute = second / 60;
             if minute != *last_minute {
                 *last_minute = minute;
                 signal_type |= 0b000100;
-                
+
                 // 小时信号
                 let hour = minute / 60;
                 if hour != *last_hour {
                     *last_hour = hour;
                     signal_type |= 0b001000;
-                    
+
                     // 天信号
                     let day = hour / 24;
                     if day != *last_day {
                         *last_day = day;
                         signal_type |= 0b010000;
-                        
+
                         // 周信号（ISO周）
                         let week = now.iso_week().week() as i64;
                         if week != *last_week {
@@ -174,19 +177,19 @@ impl TimeBus {
                 }
             }
         }
-        
+
         signal_type
     }
-    
+
     /// 执行注册的回调函数
     async fn execute_callbacks(&self, pulse: TimePulse) {
         // 创建一个向量来存储所有需要执行的回调函数的Arc克隆
         let mut callbacks_to_execute = Vec::new();
-        
+
         // 在锁的作用域内获取匹配的回调函数
         {
             let callbacks_ref = self.callbacks.read().await;
-            
+
             // 遍历所有注册的回调类型
             for (&signal_mask, callbacks_list) in callbacks_ref.iter() {
                 // 检查当前pulse是否匹配此信号类型
@@ -199,12 +202,12 @@ impl TimeBus {
             }
         }
         // 锁在这里自动释放
-        
+
         // 在锁外，为每个回调启动独立的异步任务
         for callback_arc in callbacks_to_execute {
             // 克隆pulse以在异步任务中使用
-            let pulse_copy = pulse.clone();
-            
+            let pulse_copy = pulse;
+
             // 启动异步任务，move语义确保callback_arc和pulse_copy的所有权被转移
             tokio::spawn(async move {
                 // 直接调用回调函数，因为Arc会自动解引用
@@ -241,13 +244,13 @@ mod tests {
     async fn test_time_pulse_signals() {
         let time_bus = TimeBus::new();
         let mut receiver = time_bus.subscribe();
-        
+
         // 等待第一个脉冲信号
         let pulse = timeout(Duration::from_millis(100), receiver.recv())
             .await
             .expect("接收时间脉冲超时")
             .expect("接收时间脉冲失败");
-            
+
         // 验证脉冲信号的基本结构
         assert!(pulse.signal_type > 0);
         assert!(pulse.timestamp.timestamp_millis() > 0);
@@ -258,18 +261,18 @@ mod tests {
         let time_bus = TimeBus::new();
         let mut receiver1 = time_bus.subscribe();
         let mut receiver2 = time_bus.subscribe();
-        
+
         // 两个订阅者都应该能接收到信号
         let pulse1 = timeout(Duration::from_millis(100), receiver1.recv())
             .await
             .expect("接收器1超时")
             .expect("接收器1接收失败");
-            
+
         let pulse2 = timeout(Duration::from_millis(100), receiver2.recv())
             .await
             .expect("接收器2超时")
             .expect("接收器2接收失败");
-            
+
         // 验证两个接收者都收到了相同的信号
         assert_eq!(pulse1.signal_type, pulse2.signal_type);
     }
@@ -278,45 +281,47 @@ mod tests {
     async fn test_signal_type_bit_values() {
         let time_bus = TimeBus::new();
         let mut receiver = time_bus.subscribe();
-        
+
         let start_time = std::time::Instant::now();
         let mut received_signals = Vec::new();
-        
+
         // 在短时间内收集多个信号
         while start_time.elapsed() < Duration::from_millis(100) {
+            // 尝试接收信号，每次等待10毫秒
             if let Ok(result) = timeout(Duration::from_millis(10), receiver.recv()).await {
                 if let Ok(pulse) = result {
                     received_signals.push(pulse.signal_type);
                 }
-            } else {
-                break;
             }
+            // 不break，继续尝试接收信号
         }
-        
+
         // 验证至少收到了一些信号
         assert!(!received_signals.is_empty());
-        
+
         // 验证信号类型符合预期的位值规则
         for signal_type in received_signals {
             // 信号类型应该是2的幂或它们的组合
             assert!(signal_type > 0);
         }
     }
-    
+
     #[tokio::test]
     async fn test_callback_registration() {
         let time_bus = TimeBus::new();
         let callback_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let callback_flag_clone = callback_flag.clone();
-        
+
         // 注册一个回调函数
-        time_bus.register_callback(2, move |_pulse| {
-            callback_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-        }).await;
-        
+        time_bus
+            .register_callback(2, move |_pulse| {
+                callback_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+            })
+            .await;
+
         // 等待足够时间让回调有机会执行多次
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // 验证回调函数至少被调用过一次
         assert!(callback_flag.load(std::sync::atomic::Ordering::Relaxed));
     }

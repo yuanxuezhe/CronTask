@@ -1,10 +1,10 @@
 // 注意：此文件已弃用，数据库操作现在由 core/db.rs 中的 CronTask 实现处理
 // 保留此文件作为将来可能的仓库模式实现参考
 
+use crate::common::error::CronTaskError;
 #[allow(dead_code)]
 use crate::task_engine::model::Task;
 use dbcore::Database;
-use crate::common::error::CronTaskError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -20,12 +20,17 @@ impl TaskRepository {
     }
 
     /// 从数据库中查询所有任务并构建成HashMap返回
-    /// 
+    ///
     /// # 返回值
     /// 成功时返回包含所有任务的HashMap，键为taskid，值为Task对象
     /// 失败时返回错误信息
     pub async fn load_all_tasks(&self) -> Result<HashMap<i32, Task>, CronTaskError> {
-        let rs = self.db.open("select * from task where taskid >= ?").set_param(0).query(&self.db).await?;
+        let rs = self
+            .db
+            .open("select * from task where taskid >= ?")
+            .set_param(0)
+            .query(&self.db)
+            .await?;
         let mut tasks = HashMap::new();
 
         for row_data in rs.iter() {
@@ -47,10 +52,10 @@ impl TaskRepository {
         }
         Ok(tasks)
     }
-    
+
     /// 初始化表结构
     pub async fn init_table(&self) -> Result<(), CronTaskError> {
-        Task::init(&*self.db).await?;
+        Task::init(&self.db).await?;
         Ok(())
     }
 }

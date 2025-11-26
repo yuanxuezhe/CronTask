@@ -19,7 +19,7 @@ pub struct Task {
     pub start_date: String,
     pub end_date: String,
     pub cycle_type: String,
-    pub period: String, 
+    pub period: String,
     pub time_point: String,
     pub retry_type: String,
     pub retry_interval: i32,
@@ -31,6 +31,11 @@ pub struct Task {
 impl TaskDetail {
     /// 生成并返回任务键
     pub fn task_key(&self) -> String {
-        format!("{}{}{}", self.taskid, crate::common::consts::TASK_KEY_SEPARATOR, self.timepoint)
+        format!(
+            "{}{}{}",
+            self.taskid,
+            crate::common::consts::TASK_KEY_SEPARATOR,
+            self.timepoint
+        )
     }
 }

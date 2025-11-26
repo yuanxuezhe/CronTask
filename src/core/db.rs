@@ -8,12 +8,19 @@ use crate::task_engine::model::Task;
 /// 数据库操作实现
 impl CronTask {
     /// 从数据库中查询所有任务并构建成HashMap返回
-    /// 
+    ///
     /// # 返回值
     /// 成功时返回包含所有任务的HashMap，键为taskid，值为Task对象
     /// 失败时返回错误信息
-    pub async fn load_tasks_from_db(&self) -> Result<HashMap<i32, Task>, Box<dyn std::error::Error + Send + Sync>> {
-        let rs = self.db.open("select * from task where taskid >= ?").set_param(0).query(&self.db).await?;
+    pub async fn load_tasks_from_db(
+        &self,
+    ) -> Result<HashMap<i32, Task>, Box<dyn std::error::Error + Send + Sync>> {
+        let rs = self
+            .db
+            .open("select * from task where taskid >= ?")
+            .set_param(0)
+            .query(&self.db)
+            .await?;
         let mut tasks = HashMap::new();
 
         for row_data in rs.iter() {
@@ -31,10 +38,10 @@ impl CronTask {
                 status: row_data.get("status")?,
                 discribe: row_data.get("discribe")?,
             };
-            
+
             tasks.insert(task.taskid, task);
         }
-        
+
         Ok(tasks)
     }
 }
