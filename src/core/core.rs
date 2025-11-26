@@ -46,6 +46,7 @@ impl CronTask {
     /// * `reload_millis` - 重新加载任务的时间间隔（毫秒）
     /// * `tick_mills` - 时间轮滴答间隔（毫秒）
     /// * `total_slots` - 时间轮总槽数
+    /// * `channel_buffer_size` - 消息通道缓冲区大小
     /// * `db` - 数据库连接
     /// 
     /// # 返回值
@@ -54,6 +55,7 @@ impl CronTask {
         reload_millis: u64, 
         tick_mills: u64, 
         total_slots: usize, 
+        channel_buffer_size: usize,
         db: Database
     ) -> Arc<Self> {
         let task_scheduler = Arc::new(TaskScheduler::new(
@@ -61,7 +63,7 @@ impl CronTask {
             total_slots
         ));
         
-        let message_bus = MessageBus::new();
+        let message_bus = MessageBus::new(channel_buffer_size);
         let time_bus = TimeBus::new();
         
         let shutdown_flag = Arc::new(AtomicBool::new(false));
@@ -217,6 +219,4 @@ impl CronTask {
             }
         });
     }
-    
-
 }

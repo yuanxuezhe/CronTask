@@ -53,8 +53,8 @@ pub struct MessageBus {
 
 impl MessageBus {
     /// 创建新的消息总线
-    pub fn new() -> Arc<Self> {
-        let (sender, _) = broadcast::channel(1000);
+    pub fn new(channel_buffer_size: usize) -> Arc<Self> {
+        let (sender, _) = broadcast::channel(channel_buffer_size);
         Arc::new(Self { sender })
     }
 
@@ -85,7 +85,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_bus_creation() {
-        let message_bus = MessageBus::new();
+        let message_bus = MessageBus::new(100);
         let mut receiver = message_bus.subscribe();
         
         // 发送一条测试消息，确保通道是可用的
@@ -100,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_and_receive_message() {
-        let message_bus = MessageBus::new();
+        let message_bus = MessageBus::new(100);
         let mut receiver = message_bus.subscribe();
         
         // 发送一条测试消息
@@ -118,7 +118,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_subscribers() {
-        let message_bus = MessageBus::new();
+        let message_bus = MessageBus::new(100);
         let mut receiver1 = message_bus.subscribe();
         let mut receiver2 = message_bus.subscribe();
         
@@ -144,7 +144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schedule_task_message() {
-        let message_bus = MessageBus::new();
+        let message_bus = MessageBus::new(100);
         let mut receiver = message_bus.subscribe();
         
         // 发送调度任务消息
@@ -177,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_task_message() {
-        let message_bus = MessageBus::new();
+        let message_bus = MessageBus::new(100);
         let mut receiver = message_bus.subscribe();
         
         // 发送取消任务消息
@@ -208,7 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_task_message() {
-        let message_bus = MessageBus::new();
+        let message_bus = MessageBus::new(100);
         let mut receiver = message_bus.subscribe();
         
         // 发送执行任务消息

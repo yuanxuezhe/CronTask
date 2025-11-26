@@ -153,6 +153,26 @@ impl Config {
             return Err(CronTaskError::ConfigError("时间轮总槽数不能为0".to_string()));
         }
         
+        if self.cron.reload_interval_ms == 0 {
+            return Err(CronTaskError::ConfigError("重新加载任务间隔不能为0".to_string()));
+        }
+        
+        // 验证日志级别是否有效
+        match self.logging.log_level.as_str() {
+            "error" | "warn" | "info" | "debug" | "trace" => {},
+            _ => return Err(CronTaskError::ConfigError("无效的日志级别".to_string())),
+        }
+        
+        // 验证通道缓冲区大小是否合理
+        if self.messaging.channel_buffer_size == 0 {
+            return Err(CronTaskError::ConfigError("通道缓冲区大小不能为0".to_string()));
+        }
+        
+        // 验证消息超时时间是否合理
+        if self.messaging.message_timeout_ms == 0 {
+            return Err(CronTaskError::ConfigError("消息超时时间不能为0".to_string()));
+        }
+        
         Ok(())
     }
 }

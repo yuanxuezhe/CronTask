@@ -59,7 +59,7 @@ impl TimeWheel {
             current_slot: Arc::new(AtomicUsize::new(0)),
             tick_duration,
             total_slots,
-            base_time: Utc::now().with_timezone(&Shanghai).naive_local(),
+            base_time: Self::get_current_time(),
         }
     }
     
@@ -108,8 +108,6 @@ impl TimeWheel {
     /// # 返回值
     /// 返回操作结果
     pub async fn add_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String, arg: String, task: Task) -> Result<String, CronTaskError> {
-        let now = Utc::now().with_timezone(&Shanghai).naive_local();
-        
         // 计算目标时间
         let delta = TimeDelta::from_std(delay)
             .map_err(|e| CronTaskError::TimeConversionFailed(format!("时间转换失败: {}", e)))?;
@@ -121,7 +119,7 @@ impl TimeWheel {
         // 打印当前槽位和目标槽位
         // println!("当前槽位: {}, 目标槽位: {}", current_slot, target_slot);
         // 检查时间有效性
-        self.validate_task_time(target_time, now)?;
+        self.validate_task_time(target_time, Self::get_current_time())?;
         
         // 添加任务
         self.insert_task(target_slot, key, task, arg).await
@@ -137,8 +135,6 @@ impl TimeWheel {
     /// # 返回值
     /// 返回操作结果
     pub async fn del_task(&self, timestamp: NaiveDateTime, delay: Duration, key: String) -> Result<String, CronTaskError> {
-        let now = Utc::now().with_timezone(&Shanghai).naive_local();
-        
         // 计算目标时间
         let delta = TimeDelta::from_std(delay)
             .map_err(|e| CronTaskError::TimeConversionFailed(e.to_string()))?;
@@ -146,7 +142,7 @@ impl TimeWheel {
             .ok_or(CronTaskError::TimeOverflow)?;
         
         // 如果任务时间已过时
-        if target_time < now {
+        if target_time < Self::get_current_time() {
             // 即使时间已过，也要尝试从时间轮中删除任务
             if let Ok(target_slot) = self.get_slot(target_time) {
                 let slot_index = target_slot % self.total_slots;
@@ -185,8 +181,7 @@ impl TimeWheel {
         Fut: std::future::Future<Output = ()> + Send,
     {
         // 基于实际时间计算当前槽位，而不是简单地递增
-        let now = Utc::now().with_timezone(&Shanghai).naive_local();
-        match self.get_slot(now) {
+        match self.get_slot(Self::get_current_time()) {
             Ok(current_slot) => {
                 // 原子更新当前槽位
                 self.current_slot.store(current_slot, Ordering::Release);
@@ -199,6 +194,11 @@ impl TimeWheel {
                 eprintln!("时间轮计算槽位失败: {}", e);
             }
         }
+    }
+    
+    /// 获取当前时间的辅助函数
+    fn get_current_time() -> NaiveDateTime {
+        Utc::now().with_timezone(&Shanghai).naive_local()
     }
 }
 
@@ -278,12 +278,10 @@ impl TimeWheel {
         }
         
         let slot = self.slots[current].load();
-        
-        // 使用实时时间而不是基于tick计数的时间
-        let current_time = Utc::now().with_timezone(&Shanghai).naive_local();
 
+        // 使用实时时间而不是基于tick计数的时间
         // 触发滴答事件回调
-        match tokio::time::timeout(std::time::Duration::from_millis(100), on_tick(current_time)).await {
+        match tokio::time::timeout(std::time::Duration::from_millis(100), on_tick(Self::get_current_time())).await {
             Ok(_) => {},
             Err(_) => {
                 eprintln!("警告: 时间轮回调执行超时");
