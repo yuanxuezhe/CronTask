@@ -267,7 +267,6 @@ impl CronTask {
                 timestamp: info.timestamp,
                 delay_ms: info.delay_ms,
                 key: task_key_ref.clone(), // 这里仍然需要克隆，因为消息总线需要所有权
-                arg: info.message,
             }) {
                 Ok(_) => {
                     status_updates.push((info.taskid, info.timepoint, TASK_STATUS_MONITORING));

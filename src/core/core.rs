@@ -108,7 +108,6 @@ impl CronTask {
                 timestamp: Local::now().naive_local(),
                 delay_ms: reload_interval,
                 key: reload_name,
-                arg: "__reload_tasks__".to_string(),
             });
         });
     }

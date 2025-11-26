@@ -49,16 +49,14 @@ impl TaskScheduler {
     /// * `timestamp` - 任务触发时间
     /// * `delay` - 延迟时间
     /// * `key` - 任务唯一标识符
-    /// * `arg` - 任务参数
     ///
     /// # 返回值
     /// 成功时返回任务key，失败时返回错误信息
-    pub async fn schedule<K>(
+    pub async fn add<K>(
         &self,
         timestamp: NaiveDateTime,
         delay: Duration,
         key: K,
-        arg: String,
     ) -> Result<String, CronTaskError>
     where
         K: ToString,
@@ -68,7 +66,6 @@ impl TaskScheduler {
             time: timestamp,
             interval: delay,
             key: key.to_string(),
-            arg,
             resp: resp_tx,
         };
         self.sender
@@ -133,10 +130,9 @@ impl TaskScheduler {
                     time,
                     interval,
                     key,
-                    arg,
                     resp,
                 } => {
-                    let result = time_wheel.add_task(time, interval, key, arg).await;
+                    let result = time_wheel.add_task(time, interval, key).await;
                     let _ = resp.send(result);
                 }
                 TaskRequest::Cancel {

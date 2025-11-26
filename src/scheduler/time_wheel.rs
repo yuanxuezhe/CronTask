@@ -6,7 +6,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use chrono::{NaiveDateTime, TimeDelta, Utc};
 use chrono_tz::Asia::Shanghai;
-use hashbrown::HashMap;
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
@@ -16,8 +16,8 @@ use crate::message::message_bus::{CronMessage, MessageBus};
 
 /// 时间轮槽位
 pub struct TimeWheelSlot {
-    /// 存储任务的HashMap，键为任务key，值为任务参数
-    pub tasks: Mutex<HashMap<String, String>>,
+    /// 存储任务的HashSet，值为任务key
+    pub tasks: Mutex<HashSet<String>>,
 }
 
 /// 时间轮
@@ -50,7 +50,7 @@ impl TimeWheel {
         let slots = (0..total_slots)
             .map(|_| {
                 ArcSwap::new(Arc::new(TimeWheelSlot {
-                    tasks: Mutex::new(HashMap::new()),
+                    tasks: Mutex::new(HashSet::new()),
                 }))
             })
             .collect();
@@ -104,7 +104,6 @@ impl TimeWheel {
     /// * `timestamp` - 任务触发时间
     /// * `delay` - 延迟时间
     /// * `key` - 任务唯一标识符
-    /// * `arg` - 任务参数
     ///
     /// # 返回值
     /// 返回操作结果
@@ -113,7 +112,6 @@ impl TimeWheel {
         timestamp: NaiveDateTime,
         delay: Duration,
         key: String,
-        arg: String,
     ) -> Result<String, CronTaskError> {
         // 计算目标时间
         let delta = TimeDelta::from_std(delay)
@@ -130,7 +128,7 @@ impl TimeWheel {
         self.validate_task_time(target_time, Self::get_current_time())?;
 
         // 添加任务
-        self.insert_task(target_slot, key, arg).await
+        self.insert_task(target_slot, key).await
     }
 
     /// 从时间轮中删除任务
@@ -162,7 +160,7 @@ impl TimeWheel {
                 let slot_index = target_slot % self.total_slots;
                 let slot = self.slots[slot_index].load();
                 let mut tasks = slot.tasks.lock().await;
-                if tasks.remove(&key).is_some() {
+                if tasks.remove(&key) {
                     return Ok("任务已取消".to_string());
                 }
             }
@@ -178,7 +176,7 @@ impl TimeWheel {
             let slot_index = target_slot % self.total_slots;
             let slot = self.slots[slot_index].load();
             let mut tasks = slot.tasks.lock().await;
-            if tasks.remove(&key).is_some() {
+            if tasks.remove(&key) {
                 return Ok("任务已取消".to_string());
             }
             return Ok("任务时间已过时或超出范围,无需取消".to_string());
@@ -253,17 +251,16 @@ impl TimeWheel {
         &self,
         target_slot: usize,
         key: String,
-        arg: String,
     ) -> Result<String, CronTaskError> {
         let slot_index = target_slot % self.total_slots;
         let slot = self.slots[slot_index].load();
         let mut tasks = slot.tasks.lock().await;
 
-        if tasks.contains_key(&key) {
+        if tasks.contains(&key) {
             return Err(CronTaskError::TaskAlreadyExists);
         }
 
-        tasks.insert(key.clone(), arg);
+        tasks.insert(key.clone());
         Ok(key)
     }
 
@@ -273,9 +270,10 @@ impl TimeWheel {
         let slot = self.slots[slot_index].load();
         let mut tasks = slot.tasks.lock().await;
 
-        match tasks.remove(&key) {
-            Some(_) => Ok("任务已取消".to_string()),
-            None => Ok("任务不存在,无需取消".to_string()),
+        if tasks.remove(&key) {
+            Ok("任务已取消".to_string())
+        } else {
+            Ok("任务不存在,无需取消".to_string())
         }
     }
 
@@ -321,7 +319,6 @@ impl TimeWheel {
                 Ok(mut tasks) => {
                     let task_clones: Vec<_> = tasks
                         .drain()
-                        .map(|(key, arg)| (key, arg))
                         .collect();
                     drop(tasks);
                     task_clones
@@ -333,11 +330,10 @@ impl TimeWheel {
             };
 
         // 发送任务执行事件
-        for (key, arg) in task_clones {
+        for key in task_clones {
             // 发送ExecuteTask消息到消息总线
             let message = CronMessage::ExecuteTask {
                 key,
-                eventdata: arg,
             };
             if let Err(e) = self.message_bus.send(message) {
                 eprintln!("警告: 发送任务执行消息失败: {}", e);

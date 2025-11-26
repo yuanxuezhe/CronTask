@@ -15,8 +15,6 @@ pub enum CronMessage {
         delay_ms: u64,
         /// 任务唯一标识符
         key: String,
-        /// 任务参数
-        arg: String,
     },
     /// 取消任务消息
     CancelTask {
@@ -33,8 +31,6 @@ pub enum CronMessage {
     ExecuteTask {
         /// 任务唯一标识符
         key: String,
-        /// 任务相关数据
-        eventdata: String,
     },
     /// 日志消息
     Log {

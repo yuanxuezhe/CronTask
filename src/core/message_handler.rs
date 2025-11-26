@@ -24,10 +24,9 @@ impl MessageHandler {
                     timestamp,
                     delay_ms,
                     key,
-                    arg,
                 } => {
                     // 处理任务调度消息
-                    Self::handle_schedule_task(cron_task, timestamp, delay_ms, key, arg).await;
+                    Self::handle_schedule_task(cron_task, timestamp, delay_ms, key).await;
                 }
                 CronMessage::CancelTask {
                     timestamp,
@@ -41,9 +40,9 @@ impl MessageHandler {
                     // 处理重新加载任务逻辑
                     CronTask::reload_tasks(cron_task).await;
                 }
-                CronMessage::ExecuteTask { key, eventdata } => {
+                CronMessage::ExecuteTask { key } => {
                     // 处理任务执行逻辑
-                    let _ = cron_task.on_call_back_inner(key, eventdata).await;
+                    let _ = cron_task.on_call_back_inner(key).await;
                 }
                 CronMessage::Log { level, message } => {
                     // 异步处理日志消息
@@ -65,7 +64,6 @@ impl MessageHandler {
         timestamp: NaiveDateTime,
         delay_ms: u64,
         key: String,
-        arg: String,
     ) {
         crate::info_log!(
             "task[{}] add at {} + {}ms",
@@ -75,11 +73,10 @@ impl MessageHandler {
         );
         let result = cron_task
             .task_scheduler
-            .schedule(
+            .add(
                 timestamp,
                 std::time::Duration::from_millis(delay_ms),
                 key.clone(),
-                arg,
             )
             .await;
 

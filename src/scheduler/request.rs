@@ -8,7 +8,6 @@ pub enum TaskRequest {
         time: NaiveDateTime,
         interval: Duration,
         key: String,
-        arg: String,
         resp: oneshot::Sender<Result<String, CronTaskError>>,
     },
     Cancel {

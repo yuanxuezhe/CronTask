@@ -32,20 +32,18 @@ impl CronTask {
     ///
     /// # 参数
     /// * `key` - 任务唯一标识符
-    /// * `eventdata` - 任务相关的数据
     ///
     /// # 返回值
     /// 返回 Result<(), String> 表示执行结果
     pub async fn on_call_back_inner(
         &self,
         key: String,
-        eventdata: String,
     ) -> Result<(), CronTaskError> {
-        crate::info_log!("task[{}] run with param:{}", key, eventdata);
+        crate::info_log!("task[{}] run", key);
 
         // 处理重新加载任务的特殊逻辑
         if key == RELOAD_TASK_NAME {
-            return self.handle_reload_task(key, eventdata).await.map_err(|e| {
+            return self.handle_reload_task(key).await.map_err(|e| {
                 crate::error_log!("重新加载任务失败: {}", e);
                 CronTaskError::ScheduleError(format!("重新加载任务失败: {e}"))
             });
@@ -111,13 +109,11 @@ impl CronTask {
     async fn handle_reload_task(
         &self,
         key: String,
-        eventdata: String,
     ) -> Result<(), CronTaskError> {
         let _ = self.message_bus.send(CronMessage::ScheduleTask {
             timestamp: Local::now().naive_local(),
             delay_ms: self.reload_interval,
             key: key.clone(),
-            arg: eventdata,
         });
 
         // 通过消息总线发送重新加载任务消息
@@ -157,9 +153,8 @@ impl CronTask {
         task_key: &str,
         taskdetail: &mut TaskDetail,
     ) -> Result<(), CronTaskError> {
-        // 增加重试计数并构建消息
+        // 增加重试计数
         taskdetail.increment_trigger_count();
-        let message = self.build_task_message(&task.discribe, taskdetail.get_trigger_count());
         let delay_ms = (task.retry_interval * taskdetail.get_trigger_count()) as u64;
 
         // 调度重试任务
@@ -167,7 +162,6 @@ impl CronTask {
             time_point,
             delay_ms,
             task_key.to_string(),
-            message,
             taskdetail,
         )
         .await?;
@@ -226,14 +220,12 @@ impl CronTask {
         time_point: NaiveDateTime,
         delay_ms: u64,
         task_key: String,
-        message: String,
         taskdetail: &mut TaskDetail,
     ) -> Result<(), CronTaskError> {
         match self.message_bus.send(CronMessage::ScheduleTask {
             timestamp: time_point,
             delay_ms,
             key: task_key.clone(),
-            arg: message,
         }) {
             Ok(_) => {
                 taskdetail.update_status(TASK_STATUS_RETRY);
