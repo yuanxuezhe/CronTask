@@ -24,7 +24,7 @@ use dbcore::Database;
 /// 核心任务调度管理器
 pub struct CronTask {
     /// 任务调度器
-    pub taskscheduler: Arc<TaskScheduler>,
+    pub task_scheduler: Arc<TaskScheduler>,
     /// 内部状态，包含任务和任务详情，使用RwLock优化读多写少场景
     pub inner: Arc<RwLock<InnerState>>,
     /// 重新加载任务的时间间隔（毫秒）
@@ -67,7 +67,7 @@ impl CronTask {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         
         let instance = Arc::new(Self {
-            taskscheduler: task_scheduler,
+            task_scheduler: task_scheduler,
             inner: Arc::new(RwLock::new(InnerState {
                 taskdetails: HashMap::new(),
                 tasks: HashMap::new(),
@@ -128,7 +128,7 @@ impl CronTask {
 impl CronTask {
     /// 启动时间轮
     fn start_time_wheel(instance: &Arc<CronTask>, time_bus: Arc<TimeBus>) {
-        let time_wheel = instance.taskscheduler.time_wheel();
+        let time_wheel = instance.task_scheduler.time_wheel();
         let time_bus_for_wheel = time_bus.clone();
         let shutdown_flag = instance.shutdown_flag.clone();
         

@@ -53,7 +53,7 @@ impl CronTask {
         };
         
         // 预先计算所有新任务的时间点，减少锁内计算
-        let (new_task_details, new_keys) = self.calculate_task_schedules(&new_tasks).await;
+        let (new_task_details, new_keys) = self.calculate_task_schedules(&new_tasks);
         
         // 更新内部状态
         self.update_internal_state(new_tasks, new_task_details, new_keys).await;
@@ -286,7 +286,7 @@ impl CronTask {
     }
     
     /// 计算任务调度时间点
-    async fn calculate_task_schedules(
+    fn calculate_task_schedules(
         &self, 
         new_tasks: &std::collections::HashMap<i32, crate::task_engine::model::Task>
     ) -> (Vec<TaskDetail>, HashSet<String>) {
@@ -295,7 +295,7 @@ impl CronTask {
         let mut new_keys = HashSet::with_capacity(100); // 根据预期任务数量调整
         
         // 获取时间轮配置
-        let time_wheel = self.taskscheduler.time_wheel();
+        let time_wheel = self.task_scheduler.time_wheel();
         let tick_duration_secs = time_wheel.tick_duration.as_secs();
         let total_slots = time_wheel.total_slots;
         
@@ -364,7 +364,7 @@ impl CronTask {
             for (_, detail) in guard.taskdetails.iter_mut() {
                 // 注意：new_keys已经包含了所有需要保留的任务键，直接使用引用比较
                 // 避免重复生成任务键
-                let key = gen_task_key(detail.taskid, &detail.timepoint);
+                let key = detail.task_key();
                 if new_keys.contains(&key) && detail.status == TASK_STATUS_MONITORING {
                     detail.tag = TASK_TAG_KEEP;
                 } else {

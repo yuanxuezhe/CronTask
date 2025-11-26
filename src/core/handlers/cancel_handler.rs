@@ -19,7 +19,7 @@ impl CancelHandler {
         key: String
     ) {
         crate::info_log!("crontask::cancel 取消任务: {} at {} + {}ms", key, timestamp.format("%Y-%m-%d %H:%M:%S%.3f"), delay_ms);
-        let result = cron_task.taskscheduler.cancel(
+        let result = cron_task.task_scheduler.cancel(
             timestamp,
             std::time::Duration::from_millis(delay_ms),
             key.clone(),

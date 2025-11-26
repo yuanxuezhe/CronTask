@@ -86,7 +86,16 @@ mod tests {
     #[tokio::test]
     async fn test_message_bus_creation() {
         let message_bus = MessageBus::new();
-        assert!(message_bus.subscribe().recv().await.is_ok());
+        let mut receiver = message_bus.subscribe();
+        
+        // 发送一条测试消息，确保通道是可用的
+        let test_message = CronMessage::ReloadTasks;
+        message_bus.send(test_message.clone()).unwrap();
+        
+        // 添加超时，避免测试无限期等待
+        let result = timeout(Duration::from_millis(100), receiver.recv()).await;
+        assert!(result.is_ok(), "接收消息超时");
+        assert!(result.unwrap().is_ok(), "接收消息失败");
     }
 
     #[tokio::test]

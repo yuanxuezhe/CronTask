@@ -6,14 +6,13 @@ use chrono::NaiveDateTime;
 
 // 内部模块导入
 use crate::core::core::CronTask;
-use crate::common::utils::gen_task_key;
 use crate::message::message_bus::CronMessage;
 
 /// 任务调度处理器
 pub struct ScheduleHandler;
 
 impl ScheduleHandler {
-    /// 处理任务调度消息
+    /// 处理任务调度消息 - 仅负责事件扭转，不包含业务逻辑
     pub async fn handle_schedule_task(
         cron_task: &Arc<CronTask>, 
         timestamp: NaiveDateTime, 
@@ -22,7 +21,7 @@ impl ScheduleHandler {
         arg: String
     ) {
         crate::info_log!("task[{}] add at {} + {}ms", key, timestamp.format("%Y-%m-%d %H:%M:%S%.3f"), delay_ms);
-        let result = cron_task.taskscheduler.schedule(
+        let result = cron_task.task_scheduler.schedule(
             timestamp,
             std::time::Duration::from_millis(delay_ms),
             key.clone(),

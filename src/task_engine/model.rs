@@ -29,5 +29,8 @@ pub struct Task {
 }
 
 impl TaskDetail {
-    // TaskDetail结构实现
+    /// 生成并返回任务键
+    pub fn task_key(&self) -> String {
+        format!("{}{}{}", self.taskid, crate::common::consts::TASK_KEY_SEPARATOR, self.timepoint)
+    }
 }

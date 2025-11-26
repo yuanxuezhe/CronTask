@@ -156,11 +156,12 @@ impl CronTask {
     async fn get_task_detail(&self, task_key: &str) -> Result<TaskDetail, CronTaskError> {
         // 只读操作，使用read()
         let guard = self.inner.read().await;
-        let taskdetail = guard.taskdetails
+        // 直接使用values()迭代，避免不必要的克隆
+        guard.taskdetails
             .values()
-            .find(|detail| gen_task_key(detail.taskid, &detail.timepoint) == task_key)
-            .cloned();
-        taskdetail.ok_or_else(|| CronTaskError::TaskNotFound(format!("任务明细不存在: {}", task_key)))
+            .find(|detail| detail.task_key() == task_key)
+            .cloned()
+            .ok_or_else(|| CronTaskError::TaskNotFound(format!("任务明细不存在: {}", task_key)))
     }
     
     /// 处理达到最大重试次数的情况
