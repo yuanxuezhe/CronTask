@@ -54,11 +54,6 @@ impl TimeBus {
     pub fn subscribe(&self) -> broadcast::Receiver<TimePulse> {
         self.sender.subscribe()
     }
-
-    /// 发送时间脉冲
-    pub fn send(&self, pulse: TimePulse) -> Result<(), broadcast::error::SendError<TimePulse>> {
-        self.sender.send(pulse).map(|_| ())
-    }
     
     /// 注册时间回调函数
     /// 

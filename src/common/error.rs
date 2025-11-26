@@ -3,10 +3,6 @@ use thiserror::Error;
 /// 自定义错误类型，用于处理 CronTask 中的各种错误情况
 #[derive(Debug, Error)]
 pub enum CronTaskError {
-    /// 初始化失败
-    #[error("初始化失败: {0}")]
-    InitFailed(String),
-    
     /// 配置错误
     #[error("配置错误: {0}")]
     ConfigError(String),
