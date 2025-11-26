@@ -114,7 +114,7 @@ impl CronTask {
 
     /// 处理消息总线中的消息
     async fn handle_messages(self: &Arc<Self>) {
-        crate::core::handlers::message_handler::MessageHandler::handle_messages(self).await;
+        crate::core::message_handler::MessageHandler::handle_messages(self).await;
     }
 
     /// 优雅关闭系统
