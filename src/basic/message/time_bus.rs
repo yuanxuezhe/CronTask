@@ -375,9 +375,9 @@ mod tests {
         let minute_calls = minute_callback_count.load(std::sync::atomic::Ordering::Relaxed);
 
         println!("测试结果:");
-        println!("  - 毫秒回调被调用 {millisecond_calls} 次");
-        println!("  - 秒回调被调用 {second_calls} 次");
-        println!("  - 分钟回调被调用 {minute_calls} 次");
+        println!("  - 毫秒回调被调用 {} 次", millisecond_calls);
+        println!("  - 秒回调被调用 {} 次", second_calls);
+        println!("  - 分钟回调被调用 {} 次", minute_calls);
 
         // 验证回调确实被调用了
         assert!(millisecond_calls > 0, "毫秒回调未被调用");
@@ -430,9 +430,9 @@ mod tests {
         let combined_calls = combined_callback_count.load(std::sync::atomic::Ordering::Relaxed);
 
         println!("组合信号测试结果:");
-        println!("  - 毫秒回调被调用 {millisecond_calls} 次");
-        println!("  - 秒回调被调用 {second_calls} 次");
-        println!("  - 组合回调被调用 {combined_calls} 次");
+        println!("  - 毫秒回调被调用 {} 次", millisecond_calls);
+        println!("  - 秒回调被调用 {} 次", second_calls);
+        println!("  - 组合回调被调用 {} 次", combined_calls);
 
         // 验证回调确实被调用了
         assert!(millisecond_calls > 0, "毫秒回调未被调用");

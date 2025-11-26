@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use crate::common::consts::TASK_STATUS_UNMONITORED;
 use crate::common::utils::gen_task_key;
 use crate::core::core::CronTask;
-use crate::message::message_bus::CronMessage;
+use crate::basic::message::message_bus::CronMessage;
 
 /// 消息总线处理器
 pub struct MessageHandler;

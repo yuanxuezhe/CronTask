@@ -160,7 +160,6 @@ mod tests {
             timestamp: chrono::Local::now().naive_local(),
             delay_ms: 1000,
             key: "test_key".to_string(),
-            arg: "test_arg".to_string(),
         };
 
         message_bus.send(schedule_message.clone()).unwrap();
@@ -177,19 +176,16 @@ mod tests {
                     timestamp: ts1,
                     delay_ms: dm1,
                     key: k1,
-                    arg: a1,
                 },
                 CronMessage::ScheduleTask {
                     timestamp: ts2,
                     delay_ms: dm2,
                     key: k2,
-                    arg: a2,
                 },
             ) => {
                 assert_eq!(ts1, ts2);
                 assert_eq!(dm1, dm2);
                 assert_eq!(k1, k2);
-                assert_eq!(a1, a2);
             }
             _ => panic!("消息类型不匹配"),
         }
@@ -244,7 +240,6 @@ mod tests {
         // 发送执行任务消息
         let execute_message = CronMessage::ExecuteTask {
             key: "test_key".to_string(),
-            eventdata: "test_data".to_string(),
         };
 
         message_bus.send(execute_message.clone()).unwrap();
@@ -259,15 +254,12 @@ mod tests {
             (
                 CronMessage::ExecuteTask {
                     key: k1,
-                    eventdata: e1,
                 },
                 CronMessage::ExecuteTask {
                     key: k2,
-                    eventdata: e2,
                 },
             ) => {
                 assert_eq!(k1, k2);
-                assert_eq!(e1, e2);
             }
             _ => panic!("消息类型不匹配"),
         }

@@ -85,7 +85,7 @@ pub fn log_message(level: ::log::Level, message: String) {
     if let Some(cron_task) = get_cron_task() {
         let _ = cron_task
             .message_bus
-            .send(crate::message::message_bus::CronMessage::Log {
+            .send(crate::basic::message::message_bus::CronMessage::Log {
                 level,
                 message: message_with_thread,
             });

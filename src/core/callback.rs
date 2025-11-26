@@ -8,7 +8,7 @@ use crate::common::consts::*;
 use crate::common::error::CronTaskError;
 use crate::common::utils::gen_task_key;
 use crate::core::core::CronTask;
-use crate::message::message_bus::CronMessage;
+use crate::basic::message::message_bus::CronMessage;
 use crate::task_engine::model::TaskDetail;
 
 /// 回调处理实现
@@ -280,31 +280,4 @@ impl CronTask {
         Ok(())
     }
 
-    /// 根据任务描述和当前触发次数构建任务消息
-    ///
-    /// # 参数
-    /// * `description` - 任务描述
-    /// * `current_trigger_count` - 当前触发次数
-    ///
-    /// # 返回值
-    /// 返回构建好的任务消息字符串
-    pub(crate) fn build_task_message(
-        &self,
-        description: &str,
-        current_trigger_count: i32,
-    ) -> String {
-        if current_trigger_count == 0 {
-            // 直接创建字符串，避免不必要的克隆
-            String::from(description)
-        } else {
-            // 预分配足够空间，避免多次内存分配
-            // 估算长度：原描述长度 + "重试第N次"部分(约10个字符) + 分隔符
-            let mut result = String::with_capacity(description.len() + 20);
-            result.push_str(description);
-            result.push_str(", 重试第");
-            result.push_str(&current_trigger_count.to_string());
-            result.push('次');
-            result
-        }
-    }
 }

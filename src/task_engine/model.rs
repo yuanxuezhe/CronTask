@@ -60,15 +60,7 @@ impl TaskDetail {
         self.current_trigger_count
     }
 
-    /// 更新任务标签
-    pub fn update_tag(&mut self, new_tag: i32) {
-        self.tag = new_tag;
-    }
 
-    /// 获取任务标签
-    pub fn get_tag(&self) -> i32 {
-        self.tag
-    }
 }
 
 impl Task {
@@ -201,48 +193,5 @@ impl Task {
         Ok(date >= start && date <= end)
     }
     
-    /// 更新任务状态
-    pub fn update_status(&mut self, new_status: String) {
-        self.status = new_status;
-    }
 
-    /// 更新任务描述
-    pub fn update_description(&mut self, new_description: String) {
-        self.discribe = new_description;
-    }
-
-    /// 更新任务重试间隔
-    pub fn update_retry_interval(&mut self, new_interval: i32) {
-        self.retry_interval = new_interval;
-    }
-
-    /// 更新任务最大重试次数
-    pub fn update_retry_count(&mut self, new_count: i32) {
-        self.retry_count = new_count;
-    }
-
-    /// 更新任务周期类型
-    pub fn update_cycle_type(&mut self, new_cycle_type: String) {
-        self.cycle_type = new_cycle_type;
-    }
-
-    /// 更新任务周期
-    pub fn update_period(&mut self, new_period: String) {
-        self.period = new_period;
-    }
-
-    /// 更新任务时间点
-    pub fn update_time_point(&mut self, new_time_point: String) {
-        self.time_point = new_time_point;
-    }
-
-    /// 更新任务开始日期
-    pub fn update_start_date(&mut self, new_start_date: String) {
-        self.start_date = new_start_date;
-    }
-
-    /// 更新任务结束日期
-    pub fn update_end_date(&mut self, new_end_date: String) {
-        self.end_date = new_end_date;
-    }
 }

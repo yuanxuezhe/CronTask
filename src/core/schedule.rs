@@ -10,7 +10,7 @@ use chrono_tz::Asia::Shanghai;
 use crate::common::consts::*;
 use crate::common::utils::gen_task_key;
 use crate::core::core::CronTask;
-use crate::message::message_bus::CronMessage;
+use crate::basic::message::message_bus::CronMessage;
 use crate::task_engine::model::{Task, TaskDetail};
 
 // 错误类型导入
@@ -46,7 +46,6 @@ pub struct TaskScheduleInfo {
     pub timestamp: NaiveDateTime,
     pub delay_ms: u64,
     pub task_key: String,
-    pub message: String,
     pub taskid: i32,
     pub timepoint: String,
 }
@@ -167,13 +166,10 @@ impl CronTask {
 
             // 准备需要调度的任务
             let task_key = gen_task_key(metadata.taskid, &metadata.timepoint);
-            let message =
-                self.build_task_message(&metadata.describe, metadata.current_trigger_count);
             to_schedule.push(TaskScheduleInfo {
                 timestamp: ndt,
                 delay_ms,
                 task_key,
-                message,
                 taskid: metadata.taskid,
                 timepoint: metadata.timepoint, // 已经在锁外克隆
             });
