@@ -12,14 +12,12 @@ use tokio::sync::Mutex;
 
 // 内部模块导入
 use crate::common::error::CronTaskError;
-
-/// 任务类型定义
-pub type Task = Arc<dyn Fn(String, String) + Send + Sync + 'static>;
+use crate::message::message_bus::{CronMessage, MessageBus};
 
 /// 时间轮槽位
 pub struct TimeWheelSlot {
-    /// 存储任务的HashMap，键为任务key，值为任务函数和参数
-    pub tasks: Mutex<HashMap<String, (Task, String)>>,
+    /// 存储任务的HashMap，键为任务key，值为任务参数
+    pub tasks: Mutex<HashMap<String, String>>,
 }
 
 /// 时间轮
@@ -34,6 +32,8 @@ pub struct TimeWheel {
     pub total_slots: usize,
     /// 基准时间
     pub base_time: NaiveDateTime,
+    /// 消息总线，用于发送任务执行事件
+    pub message_bus: Arc<MessageBus>,
 }
 
 impl TimeWheel {
@@ -42,10 +42,11 @@ impl TimeWheel {
     /// # 参数
     /// * `tick_duration` - 滴答间隔
     /// * `total_slots` - 总槽数
+    /// * `message_bus` - 消息总线，用于发送任务执行事件
     ///
     /// # 返回值
     /// 返回新的时间轮实例
-    pub fn new(tick_duration: Duration, total_slots: usize) -> Self {
+    pub fn new(tick_duration: Duration, total_slots: usize, message_bus: Arc<MessageBus>) -> Self {
         let slots = (0..total_slots)
             .map(|_| {
                 ArcSwap::new(Arc::new(TimeWheelSlot {
@@ -60,6 +61,7 @@ impl TimeWheel {
             tick_duration,
             total_slots,
             base_time: Self::get_current_time(),
+            message_bus,
         }
     }
 
@@ -103,7 +105,6 @@ impl TimeWheel {
     /// * `delay` - 延迟时间
     /// * `key` - 任务唯一标识符
     /// * `arg` - 任务参数
-    /// * `task` - 任务执行函数
     ///
     /// # 返回值
     /// 返回操作结果
@@ -113,7 +114,6 @@ impl TimeWheel {
         delay: Duration,
         key: String,
         arg: String,
-        task: Task,
     ) -> Result<String, CronTaskError> {
         // 计算目标时间
         let delta = TimeDelta::from_std(delay)
@@ -130,7 +130,7 @@ impl TimeWheel {
         self.validate_task_time(target_time, Self::get_current_time())?;
 
         // 添加任务
-        self.insert_task(target_slot, key, task, arg).await
+        self.insert_task(target_slot, key, arg).await
     }
 
     /// 从时间轮中删除任务
@@ -253,7 +253,6 @@ impl TimeWheel {
         &self,
         target_slot: usize,
         key: String,
-        task: Task,
         arg: String,
     ) -> Result<String, CronTaskError> {
         let slot_index = target_slot % self.total_slots;
@@ -264,7 +263,7 @@ impl TimeWheel {
             return Err(CronTaskError::TaskAlreadyExists);
         }
 
-        tasks.insert(key.clone(), (task, arg));
+        tasks.insert(key.clone(), arg);
         Ok(key)
     }
 
@@ -322,7 +321,7 @@ impl TimeWheel {
                 Ok(mut tasks) => {
                     let task_clones: Vec<_> = tasks
                         .drain()
-                        .map(|(key, (task, arg))| (key, task, arg))
+                        .map(|(key, arg)| (key, arg))
                         .collect();
                     drop(tasks);
                     task_clones
@@ -333,13 +332,16 @@ impl TimeWheel {
                 }
             };
 
-        // 并行执行任务
-        for (key, task, arg) in task_clones {
-            let task = Arc::clone(&task);
-            // 使用spawn而不是spawn_blocking，除非任务确实需要阻塞
-            tokio::task::spawn(async move {
-                task(key, arg);
-            });
+        // 发送任务执行事件
+        for (key, arg) in task_clones {
+            // 发送ExecuteTask消息到消息总线
+            let message = CronMessage::ExecuteTask {
+                key,
+                eventdata: arg,
+            };
+            if let Err(e) = self.message_bus.send(message) {
+                eprintln!("警告: 发送任务执行消息失败: {}", e);
+            }
         }
     }
 }

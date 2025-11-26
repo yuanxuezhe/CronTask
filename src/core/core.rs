@@ -56,13 +56,14 @@ impl CronTask {
         channel_buffer_size: usize,
         db: Database,
     ) -> Arc<Self> {
+        let message_bus = MessageBus::new(channel_buffer_size);
+        let time_bus = TimeBus::new();
+
         let task_scheduler = Arc::new(TaskScheduler::new(
             std::time::Duration::from_millis(tick_mills),
             total_slots,
+            message_bus.clone(),
         ));
-
-        let message_bus = MessageBus::new(channel_buffer_size);
-        let time_bus = TimeBus::new();
 
         let shutdown_flag = Arc::new(AtomicBool::new(false));
 

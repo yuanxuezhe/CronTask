@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, oneshot};
 
 // 内部模块导入
 use crate::common::error::CronTaskError;
+use crate::message::message_bus::MessageBus;
 use crate::scheduler::request::TaskRequest;
 use crate::scheduler::time_wheel::TimeWheel;
 
@@ -27,12 +28,13 @@ impl TaskScheduler {
     /// # 参数
     /// * `tick_duration` - 时间轮滴答间隔
     /// * `total_slots` - 时间轮总槽数
+    /// * `message_bus` - 消息总线，用于发送任务执行事件
     ///
     /// # 返回值
     /// 返回新的任务调度器实例
-    pub fn new(tick_duration: Duration, total_slots: usize) -> Self {
+    pub fn new(tick_duration: Duration, total_slots: usize, message_bus: Arc<MessageBus>) -> Self {
         let (sender, receiver) = mpsc::channel::<TaskRequest>(CHANNEL_BUFFER_SIZE);
-        let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots));
+        let time_wheel = Arc::new(TimeWheel::new(tick_duration, total_slots, message_bus));
         let tw_clone: Arc<TimeWheel> = Arc::clone(&time_wheel);
 
         // 启动请求处理器
@@ -48,30 +50,25 @@ impl TaskScheduler {
     /// * `delay` - 延迟时间
     /// * `key` - 任务唯一标识符
     /// * `arg` - 任务参数
-    /// * `task` - 任务执行函数
     ///
     /// # 返回值
     /// 成功时返回任务key，失败时返回错误信息
-    pub async fn schedule<F, K>(
+    pub async fn schedule<K>(
         &self,
         timestamp: NaiveDateTime,
         delay: Duration,
         key: K,
         arg: String,
-        task: F,
     ) -> Result<String, CronTaskError>
     where
-        F: Fn(String, String) + Send + Sync + 'static,
         K: ToString,
     {
         let (resp_tx, resp_rx) = oneshot::channel();
-        let arc_task = Arc::new(task);
         let req = TaskRequest::Add {
             time: timestamp,
             interval: delay,
             key: key.to_string(),
             arg,
-            task: arc_task,
             resp: resp_tx,
         };
         self.sender
@@ -137,10 +134,9 @@ impl TaskScheduler {
                     interval,
                     key,
                     arg,
-                    task,
                     resp,
                 } => {
-                    let result = time_wheel.add_task(time, interval, key, arg, task).await;
+                    let result = time_wheel.add_task(time, interval, key, arg).await;
                     let _ = resp.send(result);
                 }
                 TaskRequest::Cancel {

@@ -80,12 +80,6 @@ impl MessageHandler {
                 std::time::Duration::from_millis(delay_ms),
                 key.clone(),
                 arg,
-                {
-                    let message_bus = cron_task.message_bus.clone();
-                    move |key, eventdata| {
-                        let _ = message_bus.send(CronMessage::ExecuteTask { key, eventdata });
-                    }
-                },
             )
             .await;
 
