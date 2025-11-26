@@ -158,9 +158,9 @@ impl CronTask {
         taskdetail: &mut TaskDetail,
     ) -> Result<(), CronTaskError> {
         // 增加重试计数并构建消息
-        taskdetail.current_trigger_count += 1;
-        let message = self.build_task_message(&task.discribe, taskdetail.current_trigger_count);
-        let delay_ms = (task.retry_interval * taskdetail.current_trigger_count) as u64;
+        taskdetail.increment_trigger_count();
+        let message = self.build_task_message(&task.discribe, taskdetail.get_trigger_count());
+        let delay_ms = (task.retry_interval * taskdetail.get_trigger_count()) as u64;
 
         // 调度重试任务
         self.schedule_retry_task(
@@ -212,7 +212,7 @@ impl CronTask {
         taskdetail: &mut TaskDetail,
     ) -> Result<(), CronTaskError> {
         crate::info_log!("任务 {} 达到最大重试次数，停止调度", task.taskname);
-        taskdetail.status = TASK_STATUS_UNMONITORED;
+        taskdetail.update_status(TASK_STATUS_UNMONITORED);
         self.update_task_detail(taskdetail.clone()).await?;
         // 更新数据库中的状态
         self.update_task_status_in_db(task.taskid, &taskdetail.timepoint, taskdetail.status)
@@ -236,11 +236,11 @@ impl CronTask {
             arg: message,
         }) {
             Ok(_) => {
-                taskdetail.status = TASK_STATUS_RETRY;
+                taskdetail.update_status(TASK_STATUS_RETRY);
                 // crate::info_log!("任务重试调度成功: {}", task_key);
             }
             Err(e) => {
-                taskdetail.status = TASK_STATUS_UNMONITORED;
+                taskdetail.update_status(TASK_STATUS_UNMONITORED);
                 self.update_task_detail(taskdetail.clone()).await?;
                 self.update_task_status_in_db(
                     taskdetail.taskid,

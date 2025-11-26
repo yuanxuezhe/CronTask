@@ -79,7 +79,7 @@ impl CronTask {
     /// 从数据库重新加载所有任务，并更新内部状态和调度
     pub async fn reload_tasks(self: &Arc<Self>) {
         // 从数据库加载新任务
-        let new_tasks = match self.load_tasks_from_db().await {
+        let new_tasks = match crate::task_engine::model::Task::load_tasks_from_db(&self.db).await {
             Ok(tasks) => tasks,
             Err(e) => {
                 crate::error_log!("从数据库加载任务失败: {}", e);

@@ -96,7 +96,7 @@ impl MessageHandler {
             let mut guard = cron_task.inner.write().await;
             for (_, detail) in guard.taskdetails.iter_mut() {
                 if gen_task_key(detail.taskid, &detail.timepoint) == key {
-                    detail.status = TASK_STATUS_UNMONITORED;
+                    detail.update_status(TASK_STATUS_UNMONITORED);
                     break;
                 }
             }

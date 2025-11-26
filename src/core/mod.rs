@@ -1,6 +1,5 @@
 pub mod callback;
 pub mod core;
-pub mod db;
 pub mod message_handler;
 pub mod schedule;
 pub mod state;
