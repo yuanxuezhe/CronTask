@@ -5,6 +5,7 @@ use std::sync::Arc;
 use chrono::NaiveDateTime;
 
 // 内部模块导入
+use crate::common::utils::gen_task_key;
 use crate::core::core::CronTask;
 use crate::message::message_bus::CronMessage;
 
