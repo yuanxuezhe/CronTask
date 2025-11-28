@@ -8,7 +8,7 @@ use chrono::NaiveDateTime;
 use crate::common::consts::TASK_STATUS_UNMONITORED;
 use crate::common::utils::gen_task_key;
 use crate::core::core::CronTask;
-use crate::basic::message::message_bus::CronMessage;
+use crate::basic::CronMessage;
 
 /// 消息总线处理器
 pub struct MessageHandler;
@@ -19,6 +19,9 @@ impl MessageHandler {
         let mut receiver = cron_task.message_bus.subscribe();
 
         while let Ok(message) = receiver.recv().await {
+            // 这里我们不需要直接使用CronMessage类型，而是通过MessageBus的API来处理消息
+            // 由于我们无法直接匹配消息类型，我们需要修改MessageBus的设计，或者使用其他方式来处理消息
+            // 暂时保留原来的实现，后续可以考虑进一步优化
             match message {
                 CronMessage::ScheduleTask {
                     timestamp,

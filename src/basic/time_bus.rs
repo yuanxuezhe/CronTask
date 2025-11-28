@@ -7,8 +7,6 @@ use chrono::{DateTime, Datelike, Utc};
 use chrono_tz::Asia::Shanghai;
 use tokio::sync::{broadcast, RwLock};
 
-// 本地导入
-
 /// 时间事件类型 - 使用位值表示不同精度的时间信号
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimePulse {

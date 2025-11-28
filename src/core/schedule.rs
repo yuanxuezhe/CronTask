@@ -10,7 +10,7 @@ use chrono_tz::Asia::Shanghai;
 use crate::common::consts::*;
 use crate::common::utils::gen_task_key;
 use crate::core::core::CronTask;
-use crate::basic::message::message_bus::CronMessage;
+
 use crate::task_engine::model::{Task, TaskDetail};
 
 // 错误类型导入
@@ -187,11 +187,11 @@ impl CronTask {
             // 发送取消消息
             let task_key = &cancel_info.task_key;
 
-            match self.message_bus.send(CronMessage::CancelTask {
-                timestamp: cancel_info.timestamp,
-                delay_ms: cancel_info.delay_ms,
-                key: task_key.clone(),
-            }) {
+            match self.message_bus.send_cancel_task(
+                cancel_info.timestamp,
+                cancel_info.delay_ms,
+                task_key.clone(),
+            ) {
                 Ok(_) => {
                     status_updates.push((cancel_info.taskid, task_key.clone()));
                     crate::info_log!("发送任务取消消息: {}", task_key);
@@ -259,11 +259,11 @@ impl CronTask {
             // 借用而不是克隆task_key用于日志记录
             let task_key_ref = &info.task_key;
 
-            match self.message_bus.send(CronMessage::ScheduleTask {
-                timestamp: info.timestamp,
-                delay_ms: info.delay_ms,
-                key: task_key_ref.clone(), // 这里仍然需要克隆，因为消息总线需要所有权
-            }) {
+            match self.message_bus.send_schedule_task(
+                info.timestamp,
+                info.delay_ms,
+                task_key_ref.clone(), // 这里仍然需要克隆，因为消息总线需要所有权
+            ) {
                 Ok(_) => {
                     status_updates.push((info.taskid, info.timepoint, TASK_STATUS_MONITORING));
                     // crate::info_log!("发送任务调度消息: {}", task_key_ref);

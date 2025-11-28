@@ -85,10 +85,10 @@ pub fn log_message(level: ::log::Level, message: String) {
     if let Some(cron_task) = get_cron_task() {
         let _ = cron_task
             .message_bus
-            .send(crate::basic::message::message_bus::CronMessage::Log {
+            .send_log(
                 level,
-                message: message_with_thread,
-            });
+                message_with_thread,
+            );
     } else {
         // 如果无法获取 CRON_TASK，则直接打印到控制台，包含北京时间
         println!("[{time_str}][{level}] {message_with_thread}");

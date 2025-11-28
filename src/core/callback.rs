@@ -8,7 +8,7 @@ use crate::common::consts::*;
 use crate::common::error::CronTaskError;
 use crate::common::utils::gen_task_key;
 use crate::core::core::CronTask;
-use crate::basic::message::message_bus::CronMessage;
+
 use crate::task_engine::model::TaskDetail;
 
 /// 回调处理实现
@@ -110,14 +110,14 @@ impl CronTask {
         &self,
         key: String,
     ) -> Result<(), CronTaskError> {
-        let _ = self.message_bus.send(CronMessage::ScheduleTask {
-            timestamp: Local::now().naive_local(),
-            delay_ms: self.reload_interval,
-            key: key.clone(),
-        });
+        let _ = self.message_bus.send_schedule_task(
+            Local::now().naive_local(),
+            self.reload_interval,
+            key.clone(),
+        );
 
         // 通过消息总线发送重新加载任务消息
-        let _ = self.message_bus.send(CronMessage::ReloadTasks);
+        let _ = self.message_bus.send_reload_tasks();
         Ok(())
     }
 
@@ -222,11 +222,11 @@ impl CronTask {
         task_key: String,
         taskdetail: &mut TaskDetail,
     ) -> Result<(), CronTaskError> {
-        match self.message_bus.send(CronMessage::ScheduleTask {
-            timestamp: time_point,
+        match self.message_bus.send_schedule_task(
+            time_point,
             delay_ms,
-            key: task_key.clone(),
-        }) {
+            task_key.clone(),
+        ) {
             Ok(_) => {
                 taskdetail.update_status(TASK_STATUS_RETRY);
                 // crate::info_log!("任务重试调度成功: {}", task_key);

@@ -66,6 +66,65 @@ impl MessageBus {
     ) -> Result<(), broadcast::error::SendError<CronMessage>> {
         self.sender.send(message).map(|_| ())
     }
+    
+    /// 发送调度任务消息
+    pub fn send_schedule_task(
+        &self,
+        timestamp: NaiveDateTime,
+        delay_ms: u64,
+        key: String,
+    ) -> Result<(), broadcast::error::SendError<CronMessage>> {
+        let message = CronMessage::ScheduleTask {
+            timestamp,
+            delay_ms,
+            key,
+        };
+        self.send(message)
+    }
+    
+    /// 发送取消任务消息
+    pub fn send_cancel_task(
+        &self,
+        timestamp: NaiveDateTime,
+        delay_ms: u64,
+        key: String,
+    ) -> Result<(), broadcast::error::SendError<CronMessage>> {
+        let message = CronMessage::CancelTask {
+            timestamp,
+            delay_ms,
+            key,
+        };
+        self.send(message)
+    }
+    
+    /// 发送重新加载任务消息
+    pub fn send_reload_tasks(&self) -> Result<(), broadcast::error::SendError<CronMessage>> {
+        self.send(CronMessage::ReloadTasks)
+    }
+    
+    /// 发送执行任务消息
+    pub fn send_execute_task(
+        &self,
+        key: String,
+    ) -> Result<(), broadcast::error::SendError<CronMessage>> {
+        let message = CronMessage::ExecuteTask {
+            key,
+        };
+        self.send(message)
+    }
+    
+    /// 发送日志消息
+    pub fn send_log(
+        &self,
+        level: log::Level,
+        message: String,
+    ) -> Result<(), broadcast::error::SendError<CronMessage>> {
+        let message = CronMessage::Log {
+            level,
+            message,
+        };
+        self.send(message)
+    }
 }
 
 // 为MessageBus实现Clone特性

@@ -10,9 +10,8 @@ use tokio::sync::RwLock;
 // 内部模块导入
 use crate::common::consts::RELOAD_TASK_NAME;
 use crate::core::state::InnerState;
-use crate::basic::message::message_bus::{CronMessage, MessageBus};
-use crate::basic::message::time_bus::TimeBus;
-use crate::basic::scheduler::task_scheduler::TaskScheduler;
+use crate::core::message_handler::MessageHandler;
+use crate::basic::{MessageBus, TimeBus, TaskScheduler};
 
 // 外部 crate 使用声明
 use dbcore::Database;
@@ -56,14 +55,14 @@ impl CronTask {
         channel_buffer_size: usize,
         db: Database,
     ) -> Arc<Self> {
-        let message_bus = MessageBus::new(channel_buffer_size);
-        let time_bus = TimeBus::new();
+        let message_bus = crate::basic::create_message_bus(channel_buffer_size);
+        let time_bus = crate::basic::create_time_bus();
 
-        let task_scheduler = Arc::new(TaskScheduler::new(
+        let task_scheduler = crate::basic::create_task_scheduler(
             std::time::Duration::from_millis(tick_mills),
             total_slots,
             message_bus.clone(),
-        ));
+        );
 
         let shutdown_flag = Arc::new(AtomicBool::new(false));
 
@@ -103,18 +102,17 @@ impl CronTask {
         let reload_interval = self.reload_interval;
         let message_bus = self.message_bus.clone();
 
-        tokio::task::spawn(async move {
-            let _ = message_bus.send(CronMessage::ScheduleTask {
-                timestamp: Local::now().naive_local(),
-                delay_ms: reload_interval,
-                key: reload_name,
-            });
+        tokio::task::spawn(async move { let _ = message_bus.send_schedule_task(
+                Local::now().naive_local(),
+                reload_interval,
+                reload_name,
+            );
         });
     }
 
     /// 处理消息总线中的消息
     async fn handle_messages(self: &Arc<Self>) {
-        crate::core::message_handler::MessageHandler::handle_messages(self).await;
+        MessageHandler::handle_messages(self).await;
     }
 
     /// 优雅关闭系统

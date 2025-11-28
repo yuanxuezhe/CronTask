@@ -7,9 +7,35 @@ use tokio::sync::{mpsc, oneshot};
 
 // 内部模块导入
 use crate::common::error::CronTaskError;
-use crate::basic::message::message_bus::MessageBus;
-use crate::basic::scheduler::request::TaskRequest;
-use crate::basic::scheduler::time_wheel::TimeWheel;
+use super::message_bus::MessageBus;
+use super::time_wheel::TimeWheel;
+
+/// 任务请求类型
+#[derive(Debug)]
+pub enum TaskRequest {
+    /// 添加任务请求
+    Add {
+        /// 任务触发时间
+        timestamp: NaiveDateTime,
+        /// 延迟时间
+        delay: Duration,
+        /// 任务唯一标识符
+        key: String,
+        /// 响应通道，用于返回操作结果
+        response: oneshot::Sender<Result<String, CronTaskError>>,
+    },
+    /// 取消任务请求
+    Cancel {
+        /// 任务原定触发时间
+        timestamp: NaiveDateTime,
+        /// 原定延迟时间
+        delay: Duration,
+        /// 任务唯一标识符
+        key: String,
+        /// 响应通道，用于返回操作结果
+        response: oneshot::Sender<Result<String, CronTaskError>>,
+    },
+}
 
 /// 通道缓冲区大小
 const CHANNEL_BUFFER_SIZE: usize = 1000;
@@ -51,7 +77,7 @@ impl TaskScheduler {
     /// * `key` - 任务唯一标识符
     ///
     /// # 返回值
-    /// 成功时返回任务key，失败时返回错误信息
+    /// 返回操作结果，包含任务唯一标识符
     pub async fn add<K>(
         &self,
         timestamp: NaiveDateTime,
@@ -59,23 +85,29 @@ impl TaskScheduler {
         key: K,
     ) -> Result<String, CronTaskError>
     where
-        K: ToString,
+        K: Into<String>,
     {
-        let (resp_tx, resp_rx) = oneshot::channel();
-        let req = TaskRequest::Add {
-            time: timestamp,
-            interval: delay,
-            key: key.to_string(),
-            resp: resp_tx,
+        let (response_tx, response_rx) = oneshot::channel();
+        let request = TaskRequest::Add {
+            timestamp,
+            delay,
+            key: key.into(),
+            response: response_tx,
         };
+
+        // 发送请求到通道
         self.sender
-            .send(req)
+            .send(request)
             .await
             .map_err(|_| CronTaskError::TaskSendError)?;
-        resp_rx.await.map_err(|_| CronTaskError::TaskRecvError)?
+
+        // 等待响应
+        response_rx
+            .await
+            .map_err(|_| CronTaskError::TaskRecvError)?
     }
 
-    /// 从时间轮中移除指定任务
+    /// 取消已添加的任务
     ///
     /// # 参数
     /// * `timestamp` - 任务原定触发时间
@@ -83,7 +115,7 @@ impl TaskScheduler {
     /// * `key` - 任务唯一标识符
     ///
     /// # 返回值
-    /// 成功时返回操作结果信息，失败时返回错误信息
+    /// 返回操作结果
     pub async fn cancel<K>(
         &self,
         timestamp: NaiveDateTime,
@@ -91,65 +123,73 @@ impl TaskScheduler {
         key: K,
     ) -> Result<String, CronTaskError>
     where
-        K: ToString,
+        K: Into<String>,
     {
-        let (resp_tx, resp_rx) = oneshot::channel();
-        let req = TaskRequest::Cancel {
-            time: timestamp,
-            interval: delay,
-            key: key.to_string(),
-            resp: resp_tx,
+        let (response_tx, response_rx) = oneshot::channel();
+        let request = TaskRequest::Cancel {
+            timestamp,
+            delay,
+            key: key.into(),
+            response: response_tx,
         };
+
+        // 发送请求到通道
         self.sender
-            .send(req)
+            .send(request)
             .await
             .map_err(|_| CronTaskError::TaskSendError)?;
-        resp_rx.await.map_err(|_| CronTaskError::TaskRecvError)?
+
+        // 等待响应
+        response_rx
+            .await
+            .map_err(|_| CronTaskError::TaskRecvError)?
     }
 
-    /// 获取时间轮实例，用于外部驱动
+    /// 获取时间轮实例
+    ///
+    /// # 返回值
+    /// 返回时间轮实例的Arc引用
     pub fn time_wheel(&self) -> Arc<TimeWheel> {
-        self.time_wheel.clone()
+        Arc::clone(&self.time_wheel)
     }
 }
 
-// 私有辅助函数实现
+// 私有辅助函数
 impl TaskScheduler {
-    /// 处理来自通道的任务添加和取消请求
-    ///
-    /// # 参数
-    /// * `receiver` - 任务请求接收通道
-    /// * `time_wheel` - 时间轮实例
+    /// 处理任务请求
     async fn process_requests(
         mut receiver: mpsc::Receiver<TaskRequest>,
         time_wheel: Arc<TimeWheel>,
     ) {
+        // 持续接收请求并处理
         while let Some(request) = receiver.recv().await {
             match request {
                 TaskRequest::Add {
-                    time,
-                    interval,
+                    timestamp,
+                    delay,
                     key,
-                    resp,
+                    response,
                 } => {
-                    let result = time_wheel.add_task(time, interval, key).await;
-                    let _ = resp.send(result);
+                    let result = time_wheel.add_task(timestamp, delay, key).await;
+                    // 忽略发送响应的错误，因为客户端可能已经取消了请求
+                    let _ = response.send(result);
                 }
                 TaskRequest::Cancel {
-                    time,
-                    interval,
+                    timestamp,
+                    delay,
                     key,
-                    resp,
+                    response,
                 } => {
-                    let result = time_wheel.del_task(time, interval, key).await;
-                    let _ = resp.send(result);
+                    let result = time_wheel.del_task(timestamp, delay, key).await;
+                    // 忽略发送响应的错误，因为客户端可能已经取消了请求
+                    let _ = response.send(result);
                 }
             }
         }
     }
 }
 
-// 私有辅助函数
+/// 启动请求处理器
 fn start_request_processor(receiver: mpsc::Receiver<TaskRequest>, time_wheel: Arc<TimeWheel>) {
     tokio::spawn(async move {
         TaskScheduler::process_requests(receiver, time_wheel).await;

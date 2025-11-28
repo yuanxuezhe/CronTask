@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 // 内部模块导入
 use crate::common::error::CronTaskError;
-use crate::basic::message::message_bus::{CronMessage, MessageBus};
+use super::message_bus::{CronMessage, MessageBus};
 
 /// 时间轮槽位
 pub struct TimeWheelSlot {
