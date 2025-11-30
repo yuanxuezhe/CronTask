@@ -1,24 +1,22 @@
-// 标准库导入
-use std::fs;
-use std::path::Path;
-
-// 外部 crate 导入
-use tokio::signal;
-
 // 内部模块导入
 mod basic;
 mod common;
 mod core;
 mod task_engine;
 
+// 标准库导入
+use std::fs;
+use std::path::Path;
+
+// 外部 crate 导入
+use tokio::signal;
+use ::log::LevelFilter;
+use dbcore::Database;
+
 // 内部模块使用声明
 use crate::common::config::Config;
 use crate::core::core::CronTask;
 use crate::task_engine::model::Task;
-
-// 外部 crate 使用声明
-use ::log::LevelFilter;
-use dbcore::Database;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
