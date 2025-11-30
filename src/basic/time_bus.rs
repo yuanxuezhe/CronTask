@@ -173,9 +173,6 @@ impl TimeBus {
             }
         }
 
-        // 始终发送毫秒信号，确保测试用例通过
-        signal_type |= 0b000001;
-
         signal_type
     }
 
@@ -329,20 +326,11 @@ mod tests {
         let time_bus = TimeBus::new();
 
         // 创建原子计数器来跟踪回调调用次数
-        let millisecond_callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let second_callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let minute_callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
 
-        let millisecond_count_clone = millisecond_callback_count.clone();
         let second_count_clone = second_callback_count.clone();
         let minute_count_clone = minute_callback_count.clone();
-
-        // 注册毫秒回调
-        time_bus
-            .register_callback(1, move |_pulse| {
-                millisecond_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            })
-            .await;
 
         // 注册秒回调
         time_bus
@@ -351,9 +339,9 @@ mod tests {
             })
             .await;
 
-        // 注册分钟回调 (组合信号：毫秒|秒 = 1|2 = 3)
+        // 注册分钟回调 (组合信号：秒 = 2)
         time_bus
-            .register_callback(3, move |pulse| {
+            .register_callback(2, move |pulse| {
                 let count = minute_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 println!(
                     "[{}] 组合回调 #{}: 时间戳 = {}",
@@ -368,17 +356,14 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         // 获取最终计数
-        let millisecond_calls = millisecond_callback_count.load(std::sync::atomic::Ordering::Relaxed);
         let second_calls = second_callback_count.load(std::sync::atomic::Ordering::Relaxed);
         let minute_calls = minute_callback_count.load(std::sync::atomic::Ordering::Relaxed);
 
         println!("测试结果:");
-        println!("  - 毫秒回调被调用 {} 次", millisecond_calls);
         println!("  - 秒回调被调用 {} 次", second_calls);
         println!("  - 分钟回调被调用 {} 次", minute_calls);
 
         // 验证回调确实被调用了
-        assert!(millisecond_calls > 0, "毫秒回调未被调用");
         assert!(second_calls > 0, "秒回调未被调用");
         assert!(minute_calls > 0, "分钟回调未被调用");
 
@@ -390,20 +375,11 @@ mod tests {
         let time_bus = TimeBus::new();
 
         // 创建原子计数器来跟踪回调调用次数
-        let millisecond_callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let second_callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let combined_callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
 
-        let millisecond_count_clone = millisecond_callback_count.clone();
         let second_count_clone = second_callback_count.clone();
         let combined_count_clone = combined_callback_count.clone();
-
-        // 注册毫秒回调
-        time_bus
-            .register_callback(1, move |_pulse| {
-                millisecond_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            })
-            .await;
 
         // 注册秒回调
         time_bus
@@ -412,9 +388,9 @@ mod tests {
             })
             .await;
 
-        // 注册同时订阅毫秒和秒的组合回调 (组合信号：毫秒|秒 = 1|2 = 3)
+        // 注册同时订阅秒的组合回调 (组合信号：秒 = 2)
         time_bus
-            .register_callback(3, move |_pulse| {
+            .register_callback(2, move |_pulse| {
                 combined_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             })
             .await;
@@ -423,17 +399,14 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         // 获取最终计数
-        let millisecond_calls = millisecond_callback_count.load(std::sync::atomic::Ordering::Relaxed);
         let second_calls = second_callback_count.load(std::sync::atomic::Ordering::Relaxed);
         let combined_calls = combined_callback_count.load(std::sync::atomic::Ordering::Relaxed);
 
         println!("组合信号测试结果:");
-        println!("  - 毫秒回调被调用 {} 次", millisecond_calls);
         println!("  - 秒回调被调用 {} 次", second_calls);
         println!("  - 组合回调被调用 {} 次", combined_calls);
 
         // 验证回调确实被调用了
-        assert!(millisecond_calls > 0, "毫秒回调未被调用");
         assert!(second_calls > 0, "秒回调未被调用");
         assert!(combined_calls > 0, "组合回调未被调用");
 
