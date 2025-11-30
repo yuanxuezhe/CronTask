@@ -20,6 +20,6 @@ pub fn create_task_scheduler(
     tick_duration: Duration,
     total_slots: usize,
     message_bus: Arc<MessageBus>,
-) -> Arc<TaskScheduler> {
-    Arc::new(TaskScheduler::new(tick_duration, total_slots, message_bus))
+) -> TaskScheduler {
+    TaskScheduler::new(tick_duration, total_slots, message_bus)
 }

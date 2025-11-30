@@ -136,9 +136,6 @@ impl TimeBus {
         // 使用更精确的毫秒级时间戳判断
         let current_timestamp = now.timestamp_millis();
 
-        // 毫秒信号
-        signal_type |= 0b000001;
-
         // 秒信号
         let second = current_timestamp / 1000;
         if second != *last_second {

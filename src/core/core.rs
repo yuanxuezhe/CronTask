@@ -57,11 +57,11 @@ impl CronTask {
         let message_bus = crate::basic::create_message_bus(channel_buffer_size);
         let time_bus = crate::basic::create_time_bus();
 
-        let task_scheduler = crate::basic::create_task_scheduler(
+        let task_scheduler = Arc::new(crate::basic::create_task_scheduler(
             std::time::Duration::from_millis(tick_mills),
             total_slots,
             message_bus.clone(),
-        );
+        ));
 
         let shutdown_flag = Arc::new(AtomicBool::new(false));
 
