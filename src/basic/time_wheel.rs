@@ -77,10 +77,13 @@ impl TimeWheel {
             return Err(CronTaskError::TaskPastDue);
         }
 
-        let duration = timestamp - self.base_time;
+        // 直接使用 Duration 计算，避免 NaiveDateTime 减法和纳秒转换
+        let base_dt = self.base_time.and_local_timezone(Shanghai).unwrap();
+        let target_dt = timestamp.and_local_timezone(Shanghai).unwrap();
+        let duration = target_dt.signed_duration_since(base_dt);
         let nanos = match duration.num_nanoseconds() {
-            Some(nanos) => nanos as u64,
-            None => return Err(CronTaskError::TimeCalculationError),
+            Some(nanos) if nanos >= 0 => nanos as u64,
+            _ => return Err(CronTaskError::TimeCalculationError),
         };
 
         let tick_index = nanos / self.tick_duration.as_nanos() as u64;
@@ -95,7 +98,29 @@ impl TimeWheel {
     /// # 返回值
     /// 返回时间对应的槽位索引
     pub fn get_slot(&self, timestamp: NaiveDateTime) -> Result<usize, CronTaskError> {
-        Ok(self.get_real_slot(timestamp)? % self.total_slots)
+        let real_slot = self.get_real_slot(timestamp)?;
+        Ok(real_slot % self.total_slots)
+    }
+
+    /// 直接计算目标时间对应的槽位，避免重复计算
+    ///
+    /// # 参数
+    /// * `timestamp` - 任务触发时间
+    /// * `delay` - 延迟时间
+    ///
+    /// # 返回值
+    /// 返回目标时间和对应的槽位
+    pub fn calculate_target_slot(&self, timestamp: NaiveDateTime, delay: Duration) -> Result<(NaiveDateTime, usize), CronTaskError> {
+        // 计算目标时间
+        let delta = TimeDelta::from_std(delay)
+            .map_err(|e| CronTaskError::TimeConversionFailed(format!("时间转换失败: {e}")))?;
+        let target_time = timestamp
+            .checked_add_signed(delta)
+            .ok_or(CronTaskError::TimeOverflow)?;
+
+        // 计算目标槽位
+        let target_slot = self.get_slot(target_time)?;
+        Ok((target_time, target_slot))
     }
 
     /// 添加任务到时间轮
@@ -113,17 +138,9 @@ impl TimeWheel {
         delay: Duration,
         key: String,
     ) -> Result<String, CronTaskError> {
-        // 计算目标时间
-        let delta = TimeDelta::from_std(delay)
-            .map_err(|e| CronTaskError::TimeConversionFailed(format!("时间转换失败: {e}")))?;
-        let target_time = timestamp
-            .checked_add_signed(delta)
-            .ok_or(CronTaskError::TimeOverflow)?;
-
-        // 使用存储的当前槽位而不是实时计算
-        let target_slot = self.get_slot(target_time)?;
-        // 打印当前槽位和目标槽位
-        // println!("当前槽位: {}, 目标槽位: {}", current_slot, target_slot);
+        // 使用新方法计算目标时间和槽位，避免重复计算
+        let (target_time, target_slot) = self.calculate_target_slot(timestamp, delay)?;
+        
         // 检查时间有效性
         self.validate_task_time(target_time, Self::get_current_time())?;
 
@@ -146,30 +163,29 @@ impl TimeWheel {
         delay: Duration,
         key: String,
     ) -> Result<String, CronTaskError> {
-        // 计算目标时间
-        let delta = TimeDelta::from_std(delay)
-            .map_err(|e| CronTaskError::TimeConversionFailed(e.to_string()))?;
-        let target_time = timestamp
-            .checked_add_signed(delta)
-            .ok_or(CronTaskError::TimeOverflow)?;
+        // 使用新方法计算目标时间和槽位，避免重复计算
+        let (target_time, target_slot) = match self.calculate_target_slot(timestamp, delay) {
+            Ok(result) => result,
+            Err(e) => {
+                // 如果计算失败，返回错误信息
+                return Ok(format!("计算目标槽位失败: {e}"));
+            }
+        };
 
         // 如果任务时间已过时
         if target_time < Self::get_current_time() {
             // 即使时间已过，也要尝试从时间轮中删除任务
-            if let Ok(target_slot) = self.get_slot(target_time) {
-                let slot_index = target_slot % self.total_slots;
-                let slot = self.slots[slot_index].load();
-                let mut tasks = slot.tasks.lock().await;
-                if tasks.remove(&key) {
-                    return Ok("任务已取消".to_string());
-                }
+            let slot_index = target_slot % self.total_slots;
+            let slot = self.slots[slot_index].load();
+            let mut tasks = slot.tasks.lock().await;
+            if tasks.remove(&key) {
+                return Ok("任务已取消".to_string());
             }
             return Ok("任务时间已过时,无需取消".to_string());
         }
 
         // 使用存储的当前槽位而不是实时计算
         let current_slot = self.current_slot.load(Ordering::Relaxed);
-        let target_slot = self.get_slot(target_time)?;
 
         if target_slot <= current_slot || target_slot - current_slot >= self.total_slots {
             // 即使超出范围，也要尝试删除任务
@@ -297,11 +313,13 @@ impl TimeWheel {
 
         let slot = self.slots[current].load();
 
-        // 使用实时时间而不是基于tick计数的时间
-        // 触发滴答事件回调
+        // 1. 先获取当前时间，减少后续计算
+        let now = Self::get_current_time();
+
+        // 2. 同步执行回调，避免生命周期问题
         match tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            on_tick(Self::get_current_time()),
+            on_tick(now),
         )
         .await
         {
@@ -311,33 +329,37 @@ impl TimeWheel {
             }
         }
 
-        // 获取并释放任务锁，添加超时处理
-        let task_clones =
-            match tokio::time::timeout(std::time::Duration::from_millis(50), slot.tasks.lock())
-                .await
-            {
-                Ok(mut tasks) => {
-                    let task_clones: Vec<_> = tasks
-                        .drain()
-                        .collect();
-                    drop(tasks);
-                    task_clones
-                }
-                Err(_) => {
-                    eprintln!("警告: 获取任务锁超时，跳过任务处理");
-                    return;
-                }
-            };
-
-        // 发送任务执行事件
-        for key in task_clones {
-            // 发送ExecuteTask消息到消息总线
-            let message = CronMessage::ExecuteTask {
-                key,
-            };
-            if let Err(e) = self.message_bus.send(message) {
-                eprintln!("警告: 发送任务执行消息失败: {}", e);
+        // 3. 获取并处理任务，最小化锁持有时间
+        let task_clones = match tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            slot.tasks.lock()
+        ).await {
+            Ok(mut tasks) => {
+                // 立即获取所有任务并释放锁，减少锁持有时间
+                let task_clones: Vec<_> = tasks.drain().collect();
+                // 显式释放锁
+                drop(tasks);
+                task_clones
             }
+            Err(_) => {
+                eprintln!("警告: 获取任务锁超时，跳过任务处理");
+                return;
+            }
+        };
+
+        // 4. 批量发送任务执行事件，减少上下文切换
+        if !task_clones.is_empty() {
+            // 克隆message_bus以避免生命周期问题
+            let message_bus = self.message_bus.clone();
+            // 使用spawn处理异步消息发送
+            tokio::task::spawn(async move {
+                for key in task_clones {
+                    let message = CronMessage::ExecuteTask { key };
+                    if let Err(e) = message_bus.send(message) {
+                        eprintln!("警告: 发送任务执行消息失败: {}", e);
+                    }
+                }
+            });
         }
     }
 }

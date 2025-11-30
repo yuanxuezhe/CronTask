@@ -30,8 +30,7 @@ pub struct CronTask {
     pub db: Database,
     /// 消息总线
     pub message_bus: Arc<MessageBus>,
-    /// 时间总线
-    _time_bus: Arc<TimeBus>, // 预留字段，供未来扩展使用
+    
     /// 关闭标志，用于优雅地终止任务
     pub shutdown_flag: Arc<AtomicBool>,
 }
@@ -75,7 +74,6 @@ impl CronTask {
             reload_interval: reload_millis,
             db,
             message_bus: message_bus.clone(),
-            _time_bus: time_bus.clone(),
             shutdown_flag: shutdown_flag.clone(),
         });
 

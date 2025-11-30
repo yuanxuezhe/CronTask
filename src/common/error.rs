@@ -34,12 +34,6 @@ pub enum CronTaskError {
     #[error("时间计算错误")]
     TimeCalculationError,
 
-    #[error("发送任务请求失败")]
-    TaskSendError,
-
-    #[error("接收响应失败")]
-    TaskRecvError,
-
     #[error("时间转换失败: {0}")]
     TimeConversionFailed(String),
 
