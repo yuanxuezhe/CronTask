@@ -356,7 +356,7 @@ impl TimeWheel {
                 for key in task_clones {
                     let message = CronMessage::ExecuteTask { key };
                     if let Err(e) = message_bus.send(message) {
-                        eprintln!("警告: 发送任务执行消息失败: {}", e);
+                        eprintln!("警告: 发送任务执行消息失败: {e}");
                     }
                 }
             });

@@ -37,7 +37,7 @@ pub fn is_holiday(date: NaiveDate) -> bool {
     static HOLIDAYS: once_cell::sync::Lazy<HashSet<NaiveDate>> = once_cell::sync::Lazy::new(|| {
         [
             "20230101", "20230122", "20230123", "20230124", "20230405", "20230501", "20230622",
-            "20230929",
+            "20230929", "20231001",
         ]
         .iter()
         .filter_map(|s| parse_date(s))
@@ -79,8 +79,8 @@ pub fn is_daily_valid(_: NaiveDate) -> bool {
 pub fn check_weekly(date: NaiveDate, period: &str) -> bool {
     let weekday = date.weekday().number_from_monday(); // 从周一为1开始计算
     period[1..]
-        .chars()
-        .filter_map(|c| c.to_digit(10))
+        .split(',')
+        .filter_map(|s| s.parse::<u32>().ok())
         .any(|d| d == weekday)
 }
 
@@ -95,8 +95,8 @@ pub fn check_weekly(date: NaiveDate, period: &str) -> bool {
 pub fn check_monthly(date: NaiveDate, period: &str) -> bool {
     let day = date.day();
     period[1..]
-        .chars()
-        .filter_map(|c| c.to_digit(10))
+        .split(',')
+        .filter_map(|s| s.parse::<u32>().ok())
         .any(|d| d == day)
 }
 

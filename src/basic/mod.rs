@@ -2,6 +2,7 @@
 pub use self::message_bus::{MessageBus, CronMessage};
 pub use self::time_bus::TimeBus;
 pub use self::task_scheduler::TaskScheduler;
+pub use self::time_wheel::TimeWheel;
 
 // 直接导出工厂函数
 pub use self::api::{create_message_bus, create_time_bus, create_task_scheduler};

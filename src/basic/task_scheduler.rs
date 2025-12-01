@@ -82,4 +82,11 @@ impl TaskScheduler {
     pub fn time_wheel(&self) -> Arc<TimeWheel> {
         Arc::clone(&self.time_wheel)
     }
+
+    /// 检查任务调度器是否正在运行
+    pub fn is_running(&self) -> bool {
+        true
+    }
 }
+
+

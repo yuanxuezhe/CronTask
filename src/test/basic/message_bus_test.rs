@@ -1,0 +1,185 @@
+use crate::basic::{CronMessage, MessageBus};
+use tokio::time::{timeout, Duration};
+
+#[tokio::test]
+async fn test_message_bus_creation() {
+    let message_bus = MessageBus::new(100);
+    let mut receiver = message_bus.subscribe();
+
+    // 发送一条测试消息，确保通道是可用的
+    let test_message = CronMessage::ReloadTasks;
+    message_bus.send(test_message.clone()).unwrap();
+
+    // 添加超时，避免测试无限期等待
+    let result = timeout(Duration::from_millis(100), receiver.recv()).await;
+    assert!(result.is_ok(), "接收消息超时");
+    assert!(result.unwrap().is_ok(), "接收消息失败");
+}
+
+#[tokio::test]
+async fn test_send_and_receive_message() {
+    let message_bus = MessageBus::new(100);
+    let mut receiver = message_bus.subscribe();
+
+    // 发送一条测试消息
+    let test_message = CronMessage::ReloadTasks;
+    message_bus.send(test_message.clone()).unwrap();
+
+    // 接收消息并验证
+    let received_message = timeout(Duration::from_millis(100), receiver.recv())
+        .await
+        .expect("接收消息超时")
+        .expect("接收消息失败");
+
+    assert_eq!(
+        std::mem::discriminant(&test_message),
+        std::mem::discriminant(&received_message)
+    );
+}
+
+#[tokio::test]
+async fn test_multiple_subscribers() {
+    let message_bus = MessageBus::new(100);
+    let mut receiver1 = message_bus.subscribe();
+    let mut receiver2 = message_bus.subscribe();
+
+    // 发送一条测试消息
+    let test_message = CronMessage::ReloadTasks;
+    message_bus.send(test_message.clone()).unwrap();
+
+    // 两个订阅者都应该能接收到消息
+    let msg1 = timeout(Duration::from_millis(100), receiver1.recv())
+        .await
+        .expect("接收器1超时")
+        .expect("接收器1接收失败");
+
+    let msg2 = timeout(Duration::from_millis(100), receiver2.recv())
+        .await
+        .expect("接收器2超时")
+        .expect("接收器2接收失败");
+
+    // 验证两个接收者都收到了相同类型的消息
+    assert_eq!(
+        std::mem::discriminant(&test_message),
+        std::mem::discriminant(&msg1)
+    );
+    assert_eq!(
+        std::mem::discriminant(&test_message),
+        std::mem::discriminant(&msg2)
+    );
+}
+
+#[tokio::test]
+async fn test_schedule_task_message() {
+    let message_bus = MessageBus::new(100);
+    let mut receiver = message_bus.subscribe();
+
+    // 发送调度任务消息
+    let schedule_message = CronMessage::ScheduleTask {
+        timestamp: chrono::Local::now().naive_local(),
+        delay_ms: 1000,
+        key: "test_key".to_string(),
+    };
+
+    message_bus.send(schedule_message.clone()).unwrap();
+
+    // 接收并验证消息
+    let received_message = timeout(Duration::from_millis(100), receiver.recv())
+        .await
+        .expect("接收调度任务消息超时")
+        .expect("接收调度任务消息失败");
+
+    match (schedule_message, received_message) {
+        (
+            CronMessage::ScheduleTask {
+                timestamp: ts1,
+                delay_ms: dm1,
+                key: k1,
+            },
+            CronMessage::ScheduleTask {
+                timestamp: ts2,
+                delay_ms: dm2,
+                key: k2,
+            },
+        ) => {
+            assert_eq!(ts1, ts2);
+            assert_eq!(dm1, dm2);
+            assert_eq!(k1, k2);
+        }
+        _ => panic!("消息类型不匹配"),
+    }
+}
+
+#[tokio::test]
+async fn test_cancel_task_message() {
+    let message_bus = MessageBus::new(100);
+    let mut receiver = message_bus.subscribe();
+
+    // 发送取消任务消息
+    let cancel_message = CronMessage::CancelTask {
+        timestamp: chrono::Local::now().naive_local(),
+        delay_ms: 1000,
+        key: "test_key".to_string(),
+    };
+
+    message_bus.send(cancel_message.clone()).unwrap();
+
+    // 接收并验证消息
+    let received_message = timeout(Duration::from_millis(100), receiver.recv())
+        .await
+        .expect("接收取消任务消息超时")
+        .expect("接收取消任务消息失败");
+
+    match (cancel_message, received_message) {
+        (
+            CronMessage::CancelTask {
+                timestamp: ts1,
+                delay_ms: dm1,
+                key: k1,
+            },
+            CronMessage::CancelTask {
+                timestamp: ts2,
+                delay_ms: dm2,
+                key: k2,
+            },
+        ) => {
+            assert_eq!(ts1, ts2);
+            assert_eq!(dm1, dm2);
+            assert_eq!(k1, k2);
+        }
+        _ => panic!("消息类型不匹配"),
+    }
+}
+
+#[tokio::test]
+async fn test_execute_task_message() {
+    let message_bus = MessageBus::new(100);
+    let mut receiver = message_bus.subscribe();
+
+    // 发送执行任务消息
+    let execute_message = CronMessage::ExecuteTask {
+        key: "test_key".to_string(),
+    };
+
+    message_bus.send(execute_message.clone()).unwrap();
+
+    // 接收并验证消息
+    let received_message = timeout(Duration::from_millis(100), receiver.recv())
+        .await
+        .expect("接收执行任务消息超时")
+        .expect("接收执行任务消息失败");
+
+    match (execute_message, received_message) {
+        (
+            CronMessage::ExecuteTask {
+                key: k1,
+            },
+            CronMessage::ExecuteTask {
+                key: k2,
+            },
+        ) => {
+            assert_eq!(k1, k2);
+        }
+        _ => panic!("消息类型不匹配"),
+    }
+}

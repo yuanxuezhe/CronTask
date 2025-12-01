@@ -4,6 +4,10 @@ mod common;
 mod core;
 mod task_engine;
 
+// 测试模块导入
+#[cfg(test)]
+mod test;
+
 // 标准库导入
 use std::fs;
 use std::path::Path;
